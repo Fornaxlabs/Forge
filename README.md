@@ -24,9 +24,11 @@ Applications, NIST SSDF (SP 800-218), Conventional Commits, RFC 9457.
    work — `gh repo create <name> --private --source . --push`. FORGE assumes a git
    remote exists (PRs, branch protection, CI all build on it).
 1. Install the plugin and restart the session (agents load at startup).
-   - Dev/local: launch Claude Code with `--plugin-dir /path/to/forge`.
-   - Persistent: add `"forge": true` under `enabledPlugins` in `.claude/settings.json`
-     (project) or your user settings, then restart.
+   - Dev/local (no config change): launch Claude Code with
+     `claude --plugin-dir /path/to/forge`.
+   - Persistent: in a Claude Code session run `/plugin marketplace add /path/to/forge`,
+     then `/plugin` and enable `forge@fornaxlabs`; restart. (A local `marketplace.json`
+     lives at `.claude-plugin/marketplace.json`.)
 2. Copy `templates/project-CLAUDE.md` → project root as `CLAUDE.md`; fill in the
    `[…]` placeholders (context, commands).
 3. Copy `templates/pre-commit-config.yaml` → `.pre-commit-config.yaml`; run
