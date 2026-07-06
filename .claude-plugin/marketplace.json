@@ -1,0 +1,13 @@
+{
+  "name": "fornaxlabs",
+  "owner": {
+    "name": "FornaxLabs"
+  },
+  "plugins": [
+    {
+      "name": "forge",
+      "source": "./",
+      "description": "Fornax Orchestrated Review & Governance Engine — governance harness: triage, adversarial review, loop discipline, shared memory, traces, evals."
+    }
+  ]
+}

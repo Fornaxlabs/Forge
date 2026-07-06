@@ -1,0 +1,13 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{
+          "type": "command",
+          "command": "python3 -c \"import json,sys,re; d=json.load(sys.stdin); c=d.get('tool_input',{}).get('command',''); deny=[r'rm\\s+-rf\\s+/', r'git\\s+push\\s+.*--force', r'drop\\s+(table|database)', r'truncate\\s+table', r'mkfs', r'dd\\s+if=']; sys.exit(2) if any(re.search(p,c,re.I) for p in deny) else sys.exit(0)\""
+        }]
+      }
+    ]
+  }
+}

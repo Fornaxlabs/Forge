@@ -1,0 +1,8 @@
+{
+  "name": "forge",
+  "version": "4.0.0",
+  "description": "Fornax Orchestrated Review & Governance Engine — governance harness: triage, adversarial review, loop discipline, shared memory, traces, evals.",
+  "author": {
+    "name": "FornaxLabs"
+  }
+}

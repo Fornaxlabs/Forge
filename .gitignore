@@ -1,0 +1,9 @@
+.forge/
+traces/runs/
+audits/
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+sbom.json
