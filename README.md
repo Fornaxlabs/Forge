@@ -13,10 +13,14 @@ Applications, NIST SSDF (SP 800-218), Conventional Commits, RFC 9457.
   `bellows` (tests), `ledger` (docs/commits). Least privilege per agent.
 - **Commands** — `/forge` (pipeline), `/audit` (full security pass), `/temper`
   (run evals + scorecard), `/curate` (monthly hygiene), `/postmortem` (incident → rule).
-- **Layer 0 (deterministic)** — a PreToolUse hook blocks catastrophic Bash;
-  pre-commit runs gitleaks + ruff + mypy; CI runs lint/test/security/SBOM.
+- **Layer 0 (deterministic, enforced)** — `hooks/guard.py` blocks catastrophic Bash
+  AND enforces the tool-call ceiling for an active run (the "noodrem" is real code,
+  not just a rule); pre-commit runs gitleaks + ruff + mypy; CI runs
+  lint/test/security/SBOM. Ship `templates/.gitleaks.toml` so accepted keys don't
+  train you to `--no-verify`.
 - **Shared memory** — `memory/forge_memory.py` (SQLite + FTS5), untrusted-data by rule.
-- **Traces** — one JSONL per run: no evidence = didn't happen.
+- **Traces** — `traces/forge_trace.py` writes one JSONL per run (run_start → … →
+  run_end) and drives the ceiling. No evidence = didn't happen.
 - **Evals** — 10 planted-fault tasks + a scorecard to catch harness regressions.
 
 ## Install into a target project
@@ -31,8 +35,8 @@ Applications, NIST SSDF (SP 800-218), Conventional Commits, RFC 9457.
      lives at `.claude-plugin/marketplace.json`.)
 2. Copy `templates/project-CLAUDE.md` → project root as `CLAUDE.md`; fill in the
    `[…]` placeholders (context, commands).
-3. Copy `templates/pre-commit-config.yaml` → `.pre-commit-config.yaml`; run
-   `pre-commit install`.
+3. Copy `templates/pre-commit-config.yaml` → `.pre-commit-config.yaml` and
+   `templates/.gitleaks.toml` → `.gitleaks.toml`; run `pre-commit install`.
 4. Add the CI template to your pipeline; enable branch protection on `main`
    (PR required, no force-push).
 5. `python3 memory/forge_memory.py init` in the project; add `.forge/` and

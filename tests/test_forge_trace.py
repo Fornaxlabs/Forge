@@ -1,0 +1,65 @@
+"""Tests for traces/forge_trace.py — run lifecycle + JSONL events."""
+from __future__ import annotations
+
+import importlib.util
+import json
+from pathlib import Path
+
+import pytest
+
+_P = Path(__file__).resolve().parent.parent / "traces" / "forge_trace.py"
+_spec = importlib.util.spec_from_file_location("forge_trace", _P)
+assert _spec and _spec.loader
+ft = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(ft)
+
+T0 = 1_700_000_000.0  # fixed epoch for deterministic ts/run_id
+
+
+def _lines(home: Path):
+    (run,) = list((home / "runs").glob("*.jsonl"))
+    return [json.loads(x) for x in run.read_text().splitlines()]
+
+
+def test_full_lifecycle(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", str(tmp_path))
+    assert ft.main(["start", "--task", "add auth", "--triage", "LARGE",
+                    "--git-ref", "abc123"], now=T0) == 0
+    assert (tmp_path / "active_run.json").exists()
+    assert ft.main(["log", "--event", "review",
+                    "--json", '{"iteration": 1, "findings": []}'], now=T0) == 0
+    assert ft.main(["end", "--outcome", "green", "--iterations", "2"], now=T0) == 0
+    # active run cleared on end
+    assert not (tmp_path / "active_run.json").exists()
+
+    events = _lines(tmp_path)
+    assert events[0]["event"] == "run_start"
+    assert events[0]["triage"] == "LARGE"
+    assert events[0]["run_id"] == "2023-11-14-add-auth"
+    assert events[1]["event"] == "review"
+    assert events[-1]["event"] == "run_end"
+    assert events[-1]["outcome"] == "green"
+    # every event carries ts + run_id + event
+    for e in events:
+        assert {"ts", "run_id", "event"} <= set(e)
+
+
+def test_start_writes_ceiling_into_active(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", str(tmp_path))
+    ft.main(["start", "--task", "t", "--triage", "SMALL",
+             "--git-ref", "r", "--ceiling", "12"], now=T0)
+    active = json.loads((tmp_path / "active_run.json").read_text())
+    assert active["ceiling"] == 12
+    assert active["tool_calls"] == 0
+
+
+def test_log_without_active_run_returns_1(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", str(tmp_path))
+    assert ft.main(["log", "--event", "x"], now=T0) == 1
+
+
+def test_slug_override(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", str(tmp_path))
+    rid = ft.start(task="a very long task description that would be truncated",
+                   triage="MEDIUM", git_ref="r", ceiling=40, slug="short", now=T0)
+    assert rid == "2023-11-14-short"
