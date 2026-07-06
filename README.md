@@ -34,15 +34,14 @@ Applications, NIST SSDF (SP 800-218), Conventional Commits, RFC 9457.
    - Persistent: in a Claude Code session run `/plugin marketplace add /path/to/forge`,
      then `/plugin` and enable `forge@fornaxlabs`; restart. (A local `marketplace.json`
      lives at `.claude-plugin/marketplace.json`.)
-2. Copy `templates/project-CLAUDE.md` → project root as `CLAUDE.md`; fill in the
-   `[…]` placeholders (context, commands).
-3. Copy `templates/pre-commit-config.yaml` → `.pre-commit-config.yaml` and
-   `templates/.gitleaks.toml` → `.gitleaks.toml`; run `pre-commit install`.
-4. Add the CI template to your pipeline; enable branch protection on `main`
-   (PR required, no force-push).
-5. `python3 memory/forge_memory.py init` in the project; add `.forge/` and
-   `traces/runs/` to `.gitignore`.
-6. Baseline: run `/temper` and commit the first scorecard.
+2. From the project root, run **`/forge-init`** (or `bash "$CLAUDE_PLUGIN_ROOT/scripts/forge-init.sh"`).
+   It stamps `CLAUDE.md`, `.pre-commit-config.yaml`, `.gitleaks.toml`, a CI
+   workflow, and `.forge/memory.db`, and gitignores the runtime dirs — idempotent,
+   never overwriting an existing file.
+3. Then the manual follow-ups it prints: `pre-commit install`; fill the `[…]`
+   placeholders in `CLAUDE.md`; enable branch protection on `main` (PR required,
+   no force-push).
+4. Baseline: run `/temper` and commit the first scorecard.
 
 ## Notes / deviations from the v4 spec
 - Manifest lives at `.claude-plugin/plugin.json` (Claude Code requirement), not the
