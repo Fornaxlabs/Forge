@@ -15,7 +15,7 @@ Eén agent (reviewer) wisselt van pet: PLAN / BUILD / REVIEW.
 
 ## Loop-discipline
 - MAX 3 iteraties build↔review per BLOCKER.
-- Identieke finding 2× op dezelfde plek = STOP → attributie (§Failure) → Anvil herplant (max 1×) → daarna mens.
+- Identieke finding 2× op dezelfde plek = STOP → attributie (§Failure) → reviewer herplant (max 1×) → daarna mens.
 - Elke iteratie eerst lint + tests (laag 0) vóór her-review.
 - NOOIT een BLOCKER "oplossen" door test of regel aan te passen.
 - Noodrem: run stopt en rapporteert bij >40 tool-calls of >6 totale iteraties.
@@ -27,7 +27,7 @@ Classificeer: PLAN (aanpak fout) | CONTEXT (info ontbrak) | TOOL (omgeving/tooli
 ## Oordeelsregels
 - MUST: bij LARGE plan met risico's + getest rollback-pad vóór één regel code
 - MUST: checkpoint (git commit op werk-branch of stash-ref) vóór elke mutatie-fase
-- MUST: Quench-BLOCKER = veto, geen uitzonderingen
+- MUST: reviewer-BLOCKER = veto, geen uitzonderingen
 - MUST: raadpleeg standards/<domein>.md vóór werk in dat domein
 - MUST: raadpleeg forge-memory (search) vóór plannen en vóór review
 - NEVER: scope buiten het plan zonder melding

@@ -9,8 +9,9 @@ Foundations: Anthropic's CLAUDE.md/agentic-coding best practices, OWASP Top 10
 Applications, NIST SSDF (SP 800-218), Conventional Commits, RFC 9457.
 
 ## The pieces
-- **Agents** — `smith` (build), `anvil` (plan), `quench` (adversarial review),
-  `bellows` (tests), `ledger` (docs/commits). Least privilege per agent.
+- **Agent** — one `reviewer` that wears three hats (plan / build / adversarial
+  review) and can veto. Escalate to a fresh, independent reviewer for high-risk
+  self-authored diffs. Least privilege by design.
 - **Commands** — `/forge` (pipeline), `/audit` (full security pass), `/temper`
   (run evals + scorecard), `/curate` (monthly hygiene), `/postmortem` (incident → rule).
 - **Layer 0 (deterministic, enforced)** — `hooks/guard.py` blocks catastrophic Bash
