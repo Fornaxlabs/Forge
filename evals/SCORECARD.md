@@ -32,3 +32,25 @@ Anvil produced best-of-2 + rollback for LARGE. No regressions (first run).
 - Bonus true-positive: Quench also flagged missing `response_model` (MINOR, FASTAPI.md).
 - gitleaks correctly ignored a low-entropy placeholder key first; only a realistic
   high-entropy token triggered it — confirms the allowlist/entropy behavior works.
+
+## Run 2026-07-06 (lean-core — one agent instead of five)
+
+**Same 10 planted faults. Layer 0 byte-identical to main → 03 (secret) & 07 (CVE)
+carry over as caught.** Judgment tasks (02,04,05,06,08,09,10) run by a SINGLE
+`reviewer` agent wearing plan/build/review hats in one pass.
+
+**Result: 10/10 — matches main.** The one agent caught: SQL injection (BLOCKER),
+missing authz (BLOCKER), flaky test (MAJOR), ignored+flagged the injection, gave
+best-of-2 plans with tested rollback (LARGE), characterization plan (MEDIUM), and
+deferred the scope-creep extras.
+
+**Marginally BETTER depth this run:** it also flagged that `/v1/users` itself is
+unauthenticated (mass user-enumeration) — which the 5-agent run only called out on
+the DELETE route — and tied the missing `response_model` to a `SELECT *` password-
+hash data leak (MAJOR, not MINOR).
+
+**Honest caveat (untested):** in the eval the agent *reviews faults it did not
+write*. The multi-agent design's real advantage — a reviewer that didn't build the
+code is less blind to the builder's mistakes — is NOT exercised here. Single-agent
+parity holds for detecting external faults; self-review blindness remains the open
+risk and the reason to keep review separable when it matters.
