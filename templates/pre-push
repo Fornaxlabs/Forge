@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# FORGE pre-push gate — HARD-blocks a push that would leak a secret.
+# Installed by /forge-init into .git/hooks/pre-push. Works outside Claude Code too.
+# Hard only on secrets (unambiguous); use /forge-comply for the judgment-level audit.
+set -uo pipefail
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "FORGE pre-push: gitleaks not installed — secret gate SKIPPED. Install gitleaks to enforce." >&2
+  exit 0   # cannot hard-gate without the tool; fail open but loud
+fi
+
+REPORT="$(mktemp)"
+# Scans the tracked tree; honors .gitleaks.toml allowlist if present.
+if gitleaks dir . --redact --no-banner >"$REPORT" 2>&1; then
+  rm -f "$REPORT"
+  echo "FORGE pre-push: no secrets detected. (run /forge-comply for a full compliance check)"
+  exit 0
+fi
+
+echo "FORGE pre-push: BLOCKED — potential secret(s) detected." >&2
+echo "Fix the finding, or add it to .gitleaks.toml [allowlist] if it is an accepted key." >&2
+grep -iE "Finding|RuleID|File|Line" "$REPORT" | head -20 >&2
+rm -f "$REPORT"
+exit 1   # non-zero blocks the push

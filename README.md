@@ -12,8 +12,12 @@ Applications, NIST SSDF (SP 800-218), Conventional Commits, RFC 9457.
 - **Agent** — one `reviewer` that wears three hats (plan / build / adversarial
   review) and can veto. Escalate to a fresh, independent reviewer for high-risk
   self-authored diffs. Least privilege by design.
-- **Commands** — `/forge` (pipeline), `/audit` (full security pass), `/temper`
+- **Commands** — `/forge` (pipeline), `/forge-init` (bootstrap a project),
+  `/forge-comply` (read-only compliance audit of an existing app), `/temper`
   (run evals + scorecard), `/curate` (monthly hygiene), `/postmortem` (incident → rule).
+- **Pre-push gate (HARD)** — a git `pre-push` hook (installed by `/forge-init`)
+  blocks any push that would leak a secret. Enforced by git, not by a soft
+  CLAUDE.md rule — works even outside Claude Code.
 - **Layer 0 (deterministic, enforced)** — `hooks/guard.py` blocks catastrophic Bash
   AND enforces the tool-call ceiling for an active run (the "noodrem" is real code,
   not just a rule); pre-commit runs gitleaks + ruff + mypy; CI runs

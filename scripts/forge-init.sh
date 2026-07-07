@@ -26,6 +26,17 @@ stamp templates/pre-commit-config.yaml .pre-commit-config.yaml
 stamp templates/.gitleaks.toml      .gitleaks.toml
 stamp templates/ci-pipeline.yml     .github/workflows/forge-ci.yml
 
+# HARD pre-push secret gate (git hook) — installed only in a git repo.
+if [ -d .git ]; then
+  if [ -e .git/hooks/pre-push ]; then
+    skipped="$skipped .git/hooks/pre-push"
+  else
+    cp "$PLUGIN/templates/pre-push" .git/hooks/pre-push
+    chmod +x .git/hooks/pre-push
+    copied="$copied .git/hooks/pre-push"
+  fi
+fi
+
 # Shared memory DB (created in ./.forge/memory.db by the CLI default).
 if python3 "$PLUGIN/memory/forge_memory.py" init >/dev/null 2>&1; then
   mem="initialized .forge/memory.db"
