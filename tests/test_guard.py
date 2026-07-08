@@ -56,6 +56,25 @@ def test_decide_allows_safe():
     assert guard.decide({"tool_input": {"command": "ls"}}) == 0
 
 
+def test_project_deny_extra(tmp_path, monkeypatch):
+    # per-project deny extension: core allows it, project deny-extra.txt blocks it
+    monkeypatch.setenv("FORGE_HOME", str(tmp_path))
+    assert guard.is_denied("nft flush ruleset") is False  # not in core
+    (tmp_path / "deny-extra.txt").write_text(
+        "# fornaxos\nnft\\s+flush\\s+ruleset\nsetenforce\\s+0\n"
+    )
+    assert guard.decide({"tool_input": {"command": "nft flush ruleset"}}) == 2
+    assert guard.decide({"tool_input": {"command": "setenforce 0"}}) == 2
+    assert guard.decide({"tool_input": {"command": "nft list ruleset"}}) == 0
+
+
+def test_project_deny_extra_bad_regex_fails_open(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", str(tmp_path))
+    (tmp_path / "deny-extra.txt").write_text("[unclosed(\nrm\\s+-rf\\s+/tmp/x\n")
+    # malformed pattern is skipped; the valid one still works; nothing crashes
+    assert guard.decide({"tool_input": {"command": "echo ok"}}) == 0
+
+
 def test_ceiling_no_active_run(tmp_path, monkeypatch):
     monkeypatch.setenv("FORGE_HOME", str(tmp_path))
     assert guard.tick_and_check() is False  # no active_run.json

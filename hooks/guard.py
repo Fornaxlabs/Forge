@@ -63,11 +63,34 @@ def is_denied(command: str) -> bool:
     if re.search(r"\bchmod\b", c) and "777" in c:
         if re.search(r"--recursive|-[a-z]*r", c) and re.search(r"(?:^|[\s=])/(?:\s|$)", c):
             return True
-    return any(re.search(p, c) for p in _STATIC_DENY)
+    if any(re.search(p, c) for p in _STATIC_DENY):
+        return True
+    for pat in _extra_patterns():  # project-specific extensions
+        try:
+            if re.search(pat, c, re.I):
+                return True
+        except re.error:
+            continue  # a malformed project pattern must never wedge the guard
+    return False
 
 
 def _active_run_path() -> str:
     return os.path.join(os.environ.get("FORGE_HOME", ".forge"), "active_run.json")
+
+
+def _extra_patterns() -> list[str]:
+    """Project-specific deny regexes from ${FORGE_HOME}/deny-extra.txt (one per line,
+    '#' comments allowed). Lets a project extend the deny-list WITHOUT forking the
+    shared plugin — e.g. FornaxOS adds nft/ip/rpm-ostree lockout patterns here."""
+    path = os.path.join(os.environ.get("FORGE_HOME", ".forge"), "deny-extra.txt")
+    try:
+        with open(path) as fh:
+            return [
+                ln.strip() for ln in fh
+                if ln.strip() and not ln.lstrip().startswith("#")
+            ]
+    except OSError:
+        return []
 
 
 def tick_and_check(now: float | None = None) -> bool:
