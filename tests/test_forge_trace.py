@@ -5,7 +5,6 @@ import importlib.util
 import json
 from pathlib import Path
 
-import pytest
 
 _P = Path(__file__).resolve().parent.parent / "traces" / "forge_trace.py"
 _spec = importlib.util.spec_from_file_location("forge_trace", _P)
@@ -35,7 +34,8 @@ def test_full_lifecycle(tmp_path, monkeypatch):
     events = _lines(tmp_path)
     assert events[0]["event"] == "run_start"
     assert events[0]["triage"] == "LARGE"
-    assert events[0]["run_id"] == "2023-11-14-add-auth"
+    # run_id now carries HHMMSS (collision guard): YYYY-MM-DD-HHMMSS-slug
+    assert events[0]["run_id"] == "2023-11-14-221320-add-auth"
     assert events[1]["event"] == "review"
     assert events[-1]["event"] == "run_end"
     assert events[-1]["outcome"] == "green"
@@ -62,4 +62,12 @@ def test_slug_override(tmp_path, monkeypatch):
     monkeypatch.setenv("FORGE_HOME", str(tmp_path))
     rid = ft.start(task="a very long task description that would be truncated",
                    triage="MEDIUM", git_ref="r", ceiling=40, slug="short", now=T0)
-    assert rid == "2023-11-14-short"
+    assert rid == "2023-11-14-221320-short"
+
+
+def test_log_rejects_non_object_json(tmp_path, monkeypatch):
+    # regression: --json '[1,2]' / '5' used to crash log() with an uncaught TypeError
+    monkeypatch.setenv("FORGE_HOME", str(tmp_path))
+    ft.main(["start", "--task", "t", "--triage", "SMALL", "--git-ref", "r"], now=T0)
+    assert ft.main(["log", "--event", "x", "--json", "[1,2]"], now=T0) == 1
+    assert ft.main(["log", "--event", "x", "--json", "5"], now=T0) == 1

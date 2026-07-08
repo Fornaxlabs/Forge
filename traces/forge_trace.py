@@ -18,6 +18,7 @@ import re
 import sys
 import time
 from collections.abc import Sequence
+from typing import Any
 
 VALID_TRIAGE = ("SMALL", "MEDIUM", "LARGE")
 
@@ -43,7 +44,11 @@ def _iso(now: float) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(now))
 
 
-def _append(run_path: str, run_id: str, event: str, payload: dict, now: float) -> None:
+def _hms(now: float) -> str:
+    return time.strftime("%H%M%S", time.gmtime(now))
+
+
+def _append(run_path: str, run_id: str, event: str, payload: dict[str, Any], now: float) -> None:
     rec = {"ts": _iso(now), "run_id": run_id, "event": event, **payload}
     os.makedirs(os.path.dirname(run_path), exist_ok=True)
     with open(run_path, "a") as fh:
@@ -56,7 +61,9 @@ def start(
 ) -> str:
     if triage not in VALID_TRIAGE:
         raise ValueError(f"triage must be one of {VALID_TRIAGE}")
-    run_id = f"{_today(now)}-{_slugify(slug or task)}"
+    # Include HHMMSS so two runs with the same day+slug don't collide (which would
+    # append one run's events into another's file and clobber active_run.json).
+    run_id = f"{_today(now)}-{_hms(now)}-{_slugify(slug or task)}"
     run_path = os.path.join(_home(), "runs", f"{run_id}.jsonl")
     _append(run_path, run_id, "run_start",
             {"task": task, "triage": triage, "git_ref": git_ref}, now)
@@ -70,12 +77,17 @@ def start(
     return run_id
 
 
-def _load_active() -> dict:
+def _load_active() -> dict[str, Any]:
     with open(_active_path()) as fh:
-        return json.load(fh)
+        data = json.load(fh)
+    if not isinstance(data, dict) or "path" not in data or "run_id" not in data:
+        raise ValueError("active_run.json is corrupt (missing path/run_id)")
+    return data
 
 
-def log(event: str, extra: dict, now: float) -> None:
+def log(event: str, extra: dict[str, Any], now: float) -> None:
+    if not isinstance(extra, dict):
+        raise ValueError("--json payload must be a JSON object")
     active = _load_active()
     _append(active["path"], active["run_id"], event, extra, now)
 

@@ -1,24 +1,47 @@
 #!/usr/bin/env bash
-# FORGE pre-push gate — HARD-blocks a push that would leak a secret.
-# Installed by /forge-init into .git/hooks/pre-push. Works outside Claude Code too.
-# Hard only on secrets (unambiguous); use /forge-comply for the judgment-level audit.
+# FORGE pre-push gate — HARD-blocks a push that would leak a secret in the
+# COMMITS BEING PUSHED (scans the pushed range/history via stdin, NOT the working
+# tree — a secret committed earlier and later deleted from disk is still in the
+# history you're pushing). Fails CLOSED on tool error: a security gate must never
+# pass silently. Works outside Claude Code too. Secrets only; use /forge-comply
+# for the judgment-level audit.
 set -uo pipefail
 
 if ! command -v gitleaks >/dev/null 2>&1; then
   echo "FORGE pre-push: gitleaks not installed — secret gate SKIPPED. Install gitleaks to enforce." >&2
-  exit 0   # cannot hard-gate without the tool; fail open but loud
+  exit 0   # cannot gate without the tool
 fi
 
-REPORT="$(mktemp)"
-# Scans the tracked tree; honors .gitleaks.toml allowlist if present.
-if gitleaks dir . --redact --no-banner >"$REPORT" 2>&1; then
-  rm -f "$REPORT"
-  echo "FORGE pre-push: no secrets detected. (run /forge-comply for a full compliance check)"
-  exit 0
-fi
+ZERO="0000000000000000000000000000000000000000"
+status=0
 
-echo "FORGE pre-push: BLOCKED — potential secret(s) detected." >&2
-echo "Fix the finding, or add it to .gitleaks.toml [allowlist] if it is an accepted key." >&2
-grep -iE "Finding|RuleID|File|Line" "$REPORT" | head -20 >&2
-rm -f "$REPORT"
-exit 1   # non-zero blocks the push
+scan_range() {  # $1 = git log range for gitleaks
+  local out rc
+  out="$(gitleaks git --log="$1" --redact --no-banner 2>&1)"; rc=$?
+  [ "$rc" -eq 0 ] && return 0                       # clean
+  if printf '%s' "$out" | grep -qiE "leaks found|finding"; then
+    echo "FORGE pre-push: BLOCKED — secret(s) in commits being pushed." >&2
+    echo "Remove them from history (or add accepted keys to .gitleaks.toml)." >&2
+    printf '%s\n' "$out" | grep -iE "Finding|RuleID|File|Commit" | head -20 >&2
+    return 1
+  fi
+  # Non-zero without a leak match = gitleaks failed (bad version/range). Block.
+  echo "FORGE pre-push: gitleaks ERROR (exit $rc) — inconclusive, blocking to be safe." >&2
+  printf '%s\n' "$out" | head -5 >&2
+  return 1
+}
+
+# git feeds ref pairs on stdin: <local_ref> <local_sha> <remote_ref> <remote_sha>
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+  [ -z "${local_sha:-}" ] && continue
+  [ "$local_sha" = "$ZERO" ] && continue            # branch deletion — nothing to scan
+  if [ "$remote_sha" = "$ZERO" ]; then
+    range="$local_sha"                              # new branch — full history
+  else
+    range="${remote_sha}..${local_sha}"             # only the new commits
+  fi
+  scan_range "$range" || status=1
+done
+
+[ "$status" -eq 0 ] && echo "FORGE pre-push: no secrets in pushed commits. (run /forge-comply for a full check)"
+exit "$status"

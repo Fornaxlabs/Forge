@@ -25,6 +25,13 @@ _spec.loader.exec_module(guard)
     "mkfs.ext4 /dev/sda1",
     "dd if=/dev/zero of=/dev/sda",
     "chmod -R 777 /",
+    # regression: bypasses found by adversarial testing 2026-07-08
+    "rm -fr /",
+    "rm -r -f /",
+    "rm --recursive --force /",
+    "git push origin +main",
+    "chmod 777 -R /",
+    "rm -rf /*",
 ])
 def test_denied(cmd):
     assert guard.is_denied(cmd) is True
@@ -85,4 +92,12 @@ def test_ceiling_corrupt_file_fails_open(tmp_path, monkeypatch):
 def test_main_fails_open_on_bad_stdin(monkeypatch):
     import io
     monkeypatch.setattr("sys.stdin", io.StringIO("not json"))
+    assert guard.main() == 0
+
+
+@pytest.mark.parametrize("payload", ["null", "[]", '"x"', "5"])
+def test_main_fails_open_on_non_dict_json(monkeypatch, payload):
+    # regression: valid-but-non-object JSON used to crash decide() with a traceback
+    import io
+    monkeypatch.setattr("sys.stdin", io.StringIO(payload))
     assert guard.main() == 0

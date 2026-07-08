@@ -45,13 +45,18 @@ else
 fi
 
 # gitignore the runtime dirs (append only if missing).
+# Ensure a trailing newline first, else appends concatenate onto the last line
+# (e.g. "dist" + ".forge/" -> "dist.forge/").
+if [ -f .gitignore ] && [ -n "$(tail -c1 .gitignore 2>/dev/null)" ]; then
+  echo >> .gitignore
+fi
 for pat in ".forge/" "traces/runs/" "audits/"; do
   grep -qxF "$pat" .gitignore 2>/dev/null || echo "$pat" >> .gitignore
 done
 
 echo "FORGE initialized in: $TARGET"
-echo "  stamped:  ${copied:-（none — all already present)}"
-echo "  skipped:  ${skipped:-（none)}"
+echo "  stamped:  ${copied:-(none - all already present)}"
+echo "  skipped:  ${skipped:-(none)}"
 echo "  memory:   $mem"
 echo ""
 echo "Next steps (not automated — they need your call):"

@@ -5,21 +5,36 @@
 set -uo pipefail
 
 TARGET="${1:-$PWD}"
-cd "$TARGET"
+cd "$TARGET" || { echo "error: cannot cd to $TARGET" >&2; exit 1; }
 sep() { echo "== $1 =="; }
 
-# Build an ignore regex from .forgeignore (+ sane defaults) for the file-walk checks.
+# Build an ignore regex from .forgeignore (+ sane defaults). User lines are
+# regex-escaped so a stray metacharacter can't break the whole filter.
 IGN='node_modules|/vendor/|/dist/|\.min\.(js|css)|\.(jpg|jpeg|png|gif|webp|ico|pdf|zip|rlib|rmeta)$|/target/'
 if [ -f .forgeignore ]; then
-  while IFS= read -r p; do [ -n "$p" ] && IGN="$IGN|$p"; done < .forgeignore
+  while IFS= read -r p; do
+    [ -z "$p" ] && continue
+    esc=$(printf '%s' "$p" | sed 's/[].[^$*+?(){}|\\]/\\&/g')
+    IGN="$IGN|$esc"
+  done < .forgeignore
 fi
+
+# gitleaks findings that DISTINGUISHES a real "0 findings" from a tool error
+# (a security check must never report a false all-clear when the tool failed).
+gl_count() {  # $@ = gitleaks args → echoes an integer or "ERROR"
+  local out rc
+  out="$(gitleaks "$@" --redact --no-banner 2>&1)"; rc=$?
+  if [ "$rc" -eq 0 ]; then echo 0; return; fi
+  if printf '%s' "$out" | grep -qiE "leaks found|finding"; then
+    printf '%s' "$out" | grep -ic "finding"; return
+  fi
+  echo "ERROR(exit $rc)"
+}
 
 sep "SECRETS (tree + history)"
 if command -v gitleaks >/dev/null 2>&1; then
-  tree_n=$(gitleaks dir . --redact --no-banner 2>/dev/null | grep -ic "finding" || true)
-  echo "tree findings: ${tree_n:-0} (post-.gitleaks.toml allowlist)"
-  hist_n=$(gitleaks git --log="HEAD~50..HEAD" --redact --no-banner 2>/dev/null | grep -ic "finding" || true)
-  echo "recent-history findings (last 50 commits): ${hist_n:-0}"
+  echo "tree findings: $(gl_count dir .) (post-.gitleaks.toml allowlist)"
+  echo "recent-history findings (last 50 commits): $(gl_count git --log=HEAD~50..HEAD)"
   [ -f .gitleaks.toml ] && echo "allowlist: .gitleaks.toml present" || echo "allowlist: MISSING (.gitleaks.toml) — scan will be noisy"
 else
   echo "gitleaks: NOT INSTALLED — cannot check secrets"

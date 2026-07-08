@@ -200,6 +200,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    except sqlite3.OperationalError as exc:
+        # FTS5 raises on ordinary typos: unbalanced quote, trailing *, bare AND/NEAR.
+        print(f"error: invalid search query ({exc})", file=sys.stderr)
+        return 1
     finally:
         conn.close()
     return 0
