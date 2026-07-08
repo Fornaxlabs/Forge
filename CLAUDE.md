@@ -13,6 +13,10 @@ One `reviewer` agent wears the plan / build / review hat per step.
   best-of-2 plan → HUMAN approves → checkpoint → build → review.
 The review hat also judges the triage choice; too light = MAJOR.
 
+## Workflow
+Starts in **plan mode** (`permissions.defaultMode=plan`). Plan + approve first,
+then build only via `/forge <task>`, one approved task at a time.
+
 ## Non-negotiables
 - A reviewer BLOCKER is a veto — never "fix" it by editing a test or a rule.
 - LARGE needs risks + a tested rollback before code; checkpoint before any mutation.

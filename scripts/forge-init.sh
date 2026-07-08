@@ -44,6 +44,38 @@ else
   mem="SKIPPED (python3 not found?)"
 fi
 
+# Plan-mode-first, ENFORCED by the harness (not a soft CLAUDE.md line): every
+# session starts read-only until a plan is approved. Merge into .claude/settings.json
+# idempotently — never clobber other settings.
+if command -v python3 >/dev/null 2>&1; then
+  planmode=$(python3 - "$TARGET/.claude/settings.json" <<'PY'
+import json, os, sys
+p = sys.argv[1]
+os.makedirs(os.path.dirname(p), exist_ok=True)
+try:
+    with open(p) as f:
+        cfg = json.load(f)
+    if not isinstance(cfg, dict):
+        cfg = {}
+except (OSError, ValueError):
+    cfg = {}
+perms = cfg.get("permissions")
+if not isinstance(perms, dict):
+    perms = {}
+if perms.get("defaultMode") == "plan":
+    print("already plan-mode-first")
+else:
+    perms["defaultMode"] = "plan"
+    cfg["permissions"] = perms
+    with open(p, "w") as f:
+        json.dump(cfg, f, indent=2)
+    print("set defaultMode=plan")
+PY
+)
+else
+  planmode="SKIPPED (python3 not found?)"
+fi
+
 # gitignore the runtime dirs (append only if missing).
 # Ensure a trailing newline first, else appends concatenate onto the last line
 # (e.g. "dist" + ".forge/" -> "dist.forge/").
@@ -55,9 +87,10 @@ for pat in ".forge/" "traces/runs/" "audits/"; do
 done
 
 echo "FORGE initialized in: $TARGET"
-echo "  stamped:  ${copied:-(none - all already present)}"
-echo "  skipped:  ${skipped:-(none)}"
-echo "  memory:   $mem"
+echo "  stamped:   ${copied:-(none - all already present)}"
+echo "  skipped:   ${skipped:-(none)}"
+echo "  memory:    $mem"
+echo "  plan-mode: $planmode"
 echo ""
 echo "Next steps (not automated — they need your call):"
 echo "  1. pre-commit install"
