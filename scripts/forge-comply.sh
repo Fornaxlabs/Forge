@@ -34,7 +34,7 @@ gl_count() {  # $@ = gitleaks args → echoes an integer or "ERROR"
 sep "SECRETS (tree + history)"
 if command -v gitleaks >/dev/null 2>&1; then
   echo "tree findings: $(gl_count dir .) (post-.gitleaks.toml allowlist)"
-  echo "recent-history findings (last 50 commits): $(gl_count git --log=HEAD~50..HEAD)"
+  echo "recent-history findings (last 50 commits): $(gl_count git --log-opts=HEAD~50..HEAD)"
   [ -f .gitleaks.toml ] && echo "allowlist: .gitleaks.toml present" || echo "allowlist: MISSING (.gitleaks.toml) — scan will be noisy"
 else
   echo "gitleaks: NOT INSTALLED — cannot check secrets"

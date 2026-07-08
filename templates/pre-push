@@ -17,7 +17,7 @@ status=0
 
 scan_range() {  # $1 = git log range for gitleaks
   local out rc
-  out="$(gitleaks git --log="$1" --redact --no-banner 2>&1)"; rc=$?
+  out="$(gitleaks git --log-opts="$1" --redact --no-banner 2>&1)"; rc=$?
   [ "$rc" -eq 0 ] && return 0                       # clean
   if printf '%s' "$out" | grep -qiE "leaks found|finding"; then
     echo "FORGE pre-push: BLOCKED — secret(s) in commits being pushed." >&2
