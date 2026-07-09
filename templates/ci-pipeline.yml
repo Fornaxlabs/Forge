@@ -2,9 +2,10 @@
 # All jobs MUST be green before merge. Enable branch protection on main:
 # PR required, no force-push.
 #
-# Each job is guarded by `if: hashFiles('pyproject.toml') != ''` so a freshly
-# bootstrapped repo (no code yet) gets NEUTRAL CI, not failing CI + email spam.
-# The jobs activate automatically once the project has a pyproject.toml.
+# A `detect` job checks whether the repo has a Python project yet; the real jobs
+# run only if it does. A freshly bootstrapped repo (no pyproject.toml) gets a
+# GREEN detect job and skipped work jobs — neutral CI, no failure-email spam.
+# CI activates automatically once pyproject.toml lands.
 name: forge-ci
 
 on:
@@ -13,8 +14,24 @@ on:
     branches: [main]
 
 jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      has_project: ${{ steps.check.outputs.has_project }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        run: |
+          if [ -f pyproject.toml ]; then
+            echo "has_project=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_project=false" >> "$GITHUB_OUTPUT"
+            echo "No pyproject.toml yet — FORGE CI is dormant until code lands."
+          fi
+
   lint:
-    if: ${{ hashFiles('pyproject.toml') != '' }}
+    needs: detect
+    if: needs.detect.outputs.has_project == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,7 +41,8 @@ jobs:
       - run: uv run mypy --strict .
 
   test:
-    if: ${{ hashFiles('pyproject.toml') != '' }}
+    needs: detect
+    if: needs.detect.outputs.has_project == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,7 +51,8 @@ jobs:
       - run: uv run pytest --cov --cov-fail-under=80
 
   security:
-    if: ${{ hashFiles('pyproject.toml') != '' }}
+    needs: detect
+    if: needs.detect.outputs.has_project == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -43,7 +62,8 @@ jobs:
 
   sbom:
     # NIST SSDF PS/PW: generate CycloneDX SBOM and keep as artifact.
-    if: ${{ hashFiles('pyproject.toml') != '' }}
+    needs: detect
+    if: needs.detect.outputs.has_project == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
