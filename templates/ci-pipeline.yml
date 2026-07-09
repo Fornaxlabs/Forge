@@ -1,6 +1,10 @@
 # FORGE v4 CI pipeline (GitHub Actions form; translate to GitLab if needed).
 # All jobs MUST be green before merge. Enable branch protection on main:
 # PR required, no force-push.
+#
+# Each job is guarded by `if: hashFiles('pyproject.toml') != ''` so a freshly
+# bootstrapped repo (no code yet) gets NEUTRAL CI, not failing CI + email spam.
+# The jobs activate automatically once the project has a pyproject.toml.
 name: forge-ci
 
 on:
@@ -10,6 +14,7 @@ on:
 
 jobs:
   lint:
+    if: ${{ hashFiles('pyproject.toml') != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,6 +24,7 @@ jobs:
       - run: uv run mypy --strict .
 
   test:
+    if: ${{ hashFiles('pyproject.toml') != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,6 +33,7 @@ jobs:
       - run: uv run pytest --cov --cov-fail-under=80
 
   security:
+    if: ${{ hashFiles('pyproject.toml') != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -36,6 +43,7 @@ jobs:
 
   sbom:
     # NIST SSDF PS/PW: generate CycloneDX SBOM and keep as artifact.
+    if: ${{ hashFiles('pyproject.toml') != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
