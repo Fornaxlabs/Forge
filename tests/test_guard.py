@@ -120,3 +120,23 @@ def test_main_fails_open_on_non_dict_json(monkeypatch, payload):
     import io
     monkeypatch.setattr("sys.stdin", io.StringIO(payload))
     assert guard.main() == 0
+
+
+@pytest.mark.parametrize("cmd", [
+    # regression 2026-07-09: tokens from DIFFERENT invocations in a compound line
+    # must not combine into a false positive (recursive/force/target scattered).
+    "git rm x && chmod -R 755 d && rm -f /tmp/y && ls /",
+    "git rm -q leak.py && git init -q --bare /tmp/r.git",
+    "rm -rf ./build && cp -r src /tmp/out",
+])
+def test_compound_no_false_positive(cmd):
+    assert guard.is_denied(cmd) is False
+
+
+@pytest.mark.parametrize("cmd", [
+    "cd /tmp && rm -rf /",
+    "echo hi; rm -rf ~",
+    "true || rm --recursive --force /",
+])
+def test_compound_real_danger_still_blocked(cmd):
+    assert guard.is_denied(cmd) is True

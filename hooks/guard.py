@@ -41,28 +41,42 @@ DEFAULT_CEILING = 40
 STALE_SECONDS = 6 * 3600  # ignore an active run older than this (crash safety)
 
 
-def is_denied(command: str) -> bool:
-    """Best-effort deny of catastrophic commands (see module HONEST LIMIT).
-    Structural checks handle flag order / long forms a naive regex misses."""
-    c = command.lower()
+# Shell separators — split a compound line into individual command invocations so
+# tokens from DIFFERENT commands aren't combined into a false positive (e.g.
+# `git rm x && git init --bare /r` must not read as an `rm --recursive ... /`).
+_SEP = re.compile(r"&&|\|\||[;\n|]")
+
+
+def _segment_denied(seg: str) -> bool:
+    """Multi-condition structural checks, evaluated within ONE command invocation."""
     # rm: recursive AND force AND a bare catastrophic target (/, ~, /*).
-    if re.search(r"\brm\b", c):
-        recursive = bool(re.search(r"--recursive|-[a-z]*r", c))
-        force = bool(re.search(r"--force|-[a-z]*f", c))
-        target = bool(re.search(r"(?:^|[\s=])(?:/|~|/\*)(?:\s|$)", c)) \
-            or "--no-preserve-root" in c
+    if re.search(r"\brm\b", seg):
+        recursive = bool(re.search(r"--recursive|-[a-z]*r", seg))
+        force = bool(re.search(r"--force|-[a-z]*f", seg))
+        target = bool(re.search(r"(?:^|[\s=])(?:/|~|/\*)(?:\s|$)", seg)) \
+            or "--no-preserve-root" in seg
         if recursive and force and target:
             return True
     # git push: any force flag OR a '+refspec' (forced update).
-    if re.search(r"\bgit\s+push\b", c):
-        if re.search(r"--force|--force-with-lease|(?:^|\s)-[a-z]*f(?:\s|$)", c):
+    if re.search(r"\bgit\s+push\b", seg):
+        if re.search(r"--force|--force-with-lease|(?:^|\s)-[a-z]*f(?:\s|$)", seg):
             return True
-        if re.search(r"\s\+\S", c):
+        if re.search(r"\s\+\S", seg):
             return True
     # chmod: recursive 777 on bare root.
-    if re.search(r"\bchmod\b", c) and "777" in c:
-        if re.search(r"--recursive|-[a-z]*r", c) and re.search(r"(?:^|[\s=])/(?:\s|$)", c):
+    if re.search(r"\bchmod\b", seg) and "777" in seg:
+        if re.search(r"--recursive|-[a-z]*r", seg) and re.search(r"(?:^|[\s=])/(?:\s|$)", seg):
             return True
+    return False
+
+
+def is_denied(command: str) -> bool:
+    """Best-effort deny of catastrophic commands (see module HONEST LIMIT).
+    Multi-condition checks run PER invocation (split on shell separators); the
+    single-pattern static + project lists match anywhere on the line."""
+    c = command.lower()
+    if any(_segment_denied(seg) for seg in _SEP.split(c)):
+        return True
     if any(re.search(p, c) for p in _STATIC_DENY):
         return True
     for pat in _extra_patterns():  # project-specific extensions
