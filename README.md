@@ -8,6 +8,24 @@ Foundations: Anthropic's CLAUDE.md/agentic-coding best practices, OWASP Top 10
 (2025), OWASP ASVS 5.0, OWASP API Security Top 10, OWASP Top 10 for LLM
 Applications, NIST SSDF (SP 800-218), Conventional Commits, RFC 9457.
 
+## Status & honest scope (read this first)
+
+**Early tool. Tested, not battle-proven.** Forge works and has real tests, but it
+has NOT been proven in production or by a second user. Use it with that in mind.
+
+**What it is:** a hard floor that blocks disasters (committed secrets, destructive
+commands, failing lint/test/CVE gates) + adversarial review against *your*
+standards + an eval loop that turns each escaped bug into a regression test. It
+makes practices you already believe in impossible to skip.
+
+**What it is NOT:** it does not design your app, pick your stack, plan for you, or
+turn a non-expert into an engineer. The command-deny guard is a *footgun-catcher,
+not a security boundary* against a determined adversary — a denylist can't be
+complete.
+
+**Who it's for:** capable builders who want their own discipline enforced.
+Python/FastAPI-flavored today. Not a hand-holder for beginners.
+
 ## The pieces
 - **Agent** — one `reviewer` that wears three hats (plan / build / adversarial
   review) and can veto. Escalate to a fresh, independent reviewer for high-risk
