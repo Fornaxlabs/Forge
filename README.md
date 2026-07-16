@@ -31,8 +31,16 @@ Python/FastAPI-flavored today. Not a hand-holder for beginners.
   review) and can veto. Escalate to a fresh, independent reviewer for high-risk
   self-authored diffs. Least privilege by design.
 - **Commands** — `/forge` (pipeline), `/forge-init` (bootstrap a project),
-  `/forge-comply` (read-only compliance audit of an existing app), `/temper`
-  (run evals + scorecard), `/curate` (monthly hygiene), `/postmortem` (incident → rule).
+  `/forge-comply` (read-only compliance audit of an existing app), `/forge-doctor`
+  (self-audit the enforcement layer), `/temper` (run evals + scorecard),
+  `/curate` (monthly hygiene), `/postmortem` (incident → rule).
+- **Self-audit (the tool governs itself)** — `selfaudit/forge_doctor.py` verifies
+  FORGE's own enforcement layer hasn't been silently weakened: it fires 10
+  catastrophic commands at the *live* guard (all must be blocked) plus safe
+  commands (all must pass), confirms the hook is wired, no foreign hook was
+  smuggled in, the secret gates still reference gitleaks, and plan-mode-first
+  survives. Behavior, not file-hashes — honest edits don't cry wolf. Fails CLOSED
+  and exits non-zero on tamper, so CI and `/forge-comply` can gate on it.
 - **Pre-push gate (HARD)** — a git `pre-push` hook (installed by `/forge-init`)
   blocks any push that would leak a secret. Enforced by git, not by a soft
   CLAUDE.md rule — works even outside Claude Code.

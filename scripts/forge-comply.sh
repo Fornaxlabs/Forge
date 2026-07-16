@@ -70,6 +70,14 @@ sep "GATE LIVENESS (present AND active?)"
 [ -f .git/hooks/pre-commit ] && echo "pre-commit INSTALLED (hook present)" || echo "pre-commit NOT installed (run 'pre-commit install')"
 [ -f .git/hooks/pre-push ] && echo "pre-push gate INSTALLED" || echo "pre-push gate NOT installed"
 ls .github/workflows/*.y*ml >/dev/null 2>&1 && echo "CI workflow: present" || echo "CI workflow: MISSING"
+# Self-audit of FORGE's OWN enforcement layer (the plugin, not this project): is
+# the guard still denying catastrophes, the hook wired, the secret gates intact?
+PLUGIN_ROOT="$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)"
+if command -v python3 >/dev/null 2>&1 && [ -f "$PLUGIN_ROOT/selfaudit/forge_doctor.py" ]; then
+  echo "forge self-audit: $(python3 "$PLUGIN_ROOT/selfaudit/forge_doctor.py" --root "$PLUGIN_ROOT" 2>&1 | tail -1)"
+else
+  echo "forge self-audit: SKIPPED (python3 or forge_doctor.py missing)"
+fi
 
 sep "REPO HYGIENE"
 bin_tracked=$(git ls-files 2>/dev/null | grep -icE "\.(jpg|jpeg|png|gif|webp|ico|pdf|zip|rlib|rmeta|min\.js|min\.css)$" || true)
