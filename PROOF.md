@@ -36,20 +36,28 @@ python3 evals/prove_guard.py
 PreToolUse event** (resolved from `hooks.json`, not a fixed path), and behaviour-tests
 it. Behaviour, not file-hashes; what runs, not what's on disk.
 
-- **Self-audit on this repo: `verdict: OK` (9/9 checks pass).**
-- **Six tamper classes are caught** (each covered by a regression test):
+- **Self-audit on this repo: `verdict: OK` (10/10 checks pass).**
+- **Nine tamper classes are caught** (each covered by a regression test):
   1. deny-list trimmed → canary battery fails;
   2. guard re-pointed at a decoy script → the *decoy* is loaded and fails;
   3. guard moved to a non-blocking event with a PreToolUse decoy → "no guard wired";
-  4. tool-call ceiling neutered (`tick_and_check` stubbed) → behaviour test trips it;
-  5. a foreign hook smuggled in (even one whose command contains "guard.py", e.g.
+  4. guard command shell-wrapped so its exit is swallowed (`… ; exit 0`, `… || true`,
+     `… &`, `true # …guard.py`, `sh -c "exit 0" …guard.py`) → only a *canonical*
+     `python <path>` command is accepted; every wrapper is rejected;
+  5. guard wired with a matcher that excludes Bash (`"matcher":"Write"`) → rejected
+     (the matched entry must cover the Bash tool);
+  6. tool-call ceiling neutered (`tick_and_check` stubbed) → behaviour test trips it;
+  7. loop cap neutered (`iteration_breached` stubbed) → behaviour test trips it;
+  8. a foreign hook smuggled in (even one whose command contains "guard.py", e.g.
      `curl …/guard.py | sh`) → flagged by *resolved path*, not substring;
-  6. a secret gate or plan-mode neutered but left as a commented decoy → rejected
+  9. a secret gate or plan-mode neutered but left as a commented decoy → rejected
      (gitleaks must appear uncommented; plan-mode is verified by running forge-init).
 
-Any FAIL exits 1. **Honest limit:** this proves the enforcement layer has not been
-weakened in these known ways — it is not a proof of total integrity; a novel tamper
-outside these classes could still pass. The blessed-hook allowlist is `guard.py` only.
+Any FAIL exits 1; a guard that *raises* is a FAIL, not a crash. **Honest limit:** this
+proves the enforcement layer has not been weakened in these known ways — it is not a
+proof of total integrity; a novel tamper outside these classes could still pass. The
+blessed-hook allowlist is `guard.py` only. (Both blocking controls — the tool-call
+ceiling and the loop cap — are behaviour-tested.)
 
 ```
 python3 selfaudit/forge_doctor.py                 # -> verdict: OK

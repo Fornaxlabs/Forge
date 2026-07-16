@@ -13,6 +13,8 @@ import shutil
 import sys
 from pathlib import Path
 
+import pytest
+
 _P = Path(__file__).resolve().parent.parent / "selfaudit" / "forge_doctor.py"
 _spec = importlib.util.spec_from_file_location("forge_doctor", _P)
 assert _spec and _spec.loader
@@ -229,3 +231,77 @@ def test_cli_json_on_tamper_returns_one(tmp_path, capsys):
     rc = doctor.main(["--root", str(root), "--json"])
     assert rc == 1
     assert json.loads(capsys.readouterr().out)["verdict"] == "FAIL"
+
+
+# ============ BLOCKER/MAJOR fixes from the 2nd adversarial review ============
+
+
+@pytest.mark.parametrize("cmd", [
+    'python3 "${CLAUDE_PLUGIN_ROOT}/hooks/guard.py" ; exit 0',
+    'python3 "${CLAUDE_PLUGIN_ROOT}/hooks/guard.py" || true',
+    'python3 "${CLAUDE_PLUGIN_ROOT}/hooks/guard.py" &',
+    'true # python3 ${CLAUDE_PLUGIN_ROOT}/hooks/guard.py',
+    'sh -c "exit 0" ${CLAUDE_PLUGIN_ROOT}/hooks/guard.py',
+])
+def test_shell_wrapped_guard_is_caught(tmp_path, cmd):
+    # real guard.py present, but the wired command neuters it with a shell trick
+    root = _min_root(tmp_path, hooks=_hooks(cmd))
+    guard, path, wiring = doctor.resolve_wired_guard(str(root))
+    assert guard is None, f"shell trick passed: {cmd}"
+    assert _status(wiring, "guard-hook-wired") == doctor.FAIL
+    assert doctor.check_no_foreign_hooks(str(root)).status == doctor.WARN  # also not blessed
+
+
+def test_canonical_guard_command_still_accepted(tmp_path):
+    root = _min_root(tmp_path, hooks=_hooks(_REAL_GUARD_CMD))
+    guard, path, wiring = doctor.resolve_wired_guard(str(root))
+    assert guard is not None and _status(wiring, "guard-hook-wired") == doctor.OK
+
+
+def test_non_bash_matcher_is_caught(tmp_path):
+    # real guard wired, but matcher excludes Bash → never fires on a Bash command
+    hooks = {"hooks": {"PreToolUse": [
+        {"matcher": "Write", "hooks": [{"type": "command", "command": _REAL_GUARD_CMD}]}
+    ]}}
+    root = _min_root(tmp_path, hooks=hooks)
+    guard, _, wiring = doctor.resolve_wired_guard(str(root))
+    assert guard is None
+    assert _status(wiring, "guard-hook-wired") == doctor.FAIL
+
+
+def test_bash_covering_matchers_accepted(tmp_path):
+    for m in ("Bash", "*", "Edit|Write|Bash"):
+        hooks = {"hooks": {"PreToolUse": [
+            {"matcher": m, "hooks": [{"type": "command", "command": _REAL_GUARD_CMD}]}
+        ]}}
+        root = _min_root(tmp_path / m.replace("|", "_").replace("*", "star"), hooks=hooks)
+        guard, _, _ = doctor.resolve_wired_guard(str(root))
+        assert guard is not None, f"matcher {m!r} wrongly rejected"
+
+
+def test_neutered_loop_cap_is_caught(tmp_path):
+    root = _min_root(tmp_path)
+    (root / "hooks" / "guard.py").write_text(
+        "DEFAULT_CEILING=40\n"
+        "def is_denied(c): return 'rm -rf /' in c\n"
+        "def tick_and_check(now=None): return False\n"
+        "def iteration_breached(now=None): return False\n"  # loop cap neutered
+    )
+    guard, _, _ = doctor.resolve_wired_guard(str(root))
+    assert doctor.check_iteration_cap_behaves(guard).status == doctor.FAIL
+
+
+def test_real_loop_cap_behaves(tmp_path):
+    guard, _, _ = doctor.resolve_wired_guard(str(_min_root(tmp_path)))
+    assert doctor.check_iteration_cap_behaves(guard).status == doctor.OK
+
+
+def test_raising_guard_is_fail_not_crash(tmp_path):
+    root = _min_root(tmp_path)
+    (root / "hooks" / "guard.py").write_text(
+        "def is_denied(c): raise RuntimeError('boom')\n"
+        "def tick_and_check(now=None): return False\n"
+        "def iteration_breached(now=None): return False\n"
+    )
+    guard, _, _ = doctor.resolve_wired_guard(str(root))
+    assert doctor.check_guard_denies(guard).status == doctor.FAIL  # no traceback escapes

