@@ -5,13 +5,17 @@ Also writes .forge/active_run.json so hooks/guard.py can enforce the tool-call
 ceiling for the duration of a run. `end` clears it.
 
 Commands:
-  start --task T --triage SMALL|MEDIUM|LARGE --git-ref R [--ceiling N] [--slug S]
-  log   --event E [--json '{...}']            append an arbitrary event
-  end   --outcome O [--iterations N] [--tool-calls N]
+  start   --task T --triage SMALL|MEDIUM|LARGE --git-ref R [--ceiling N] [--slug S]
+  log     --event E [--json '{...}']          append an arbitrary event
+  blocker --id SLUG                           record a review BLOCKER; once the same
+                                              id exceeds the iteration cap, guard.py
+                                              blocks the next tool call (loop discipline)
+  end     --outcome O [--iterations N] [--tool-calls N]
 """
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import re
@@ -92,6 +96,39 @@ def log(event: str, extra: dict[str, Any], now: float) -> None:
     _append(active["path"], active["run_id"], event, extra, now)
 
 
+def record_blocker(blocker_id: str, now: float) -> int:
+    """Increment the count for this blocker on the active run and log it. Returns the
+    new count. Once it exceeds the run's iteration_cap, hooks/guard.py blocks the next
+    tool call — this is what turns 'max 3 iterations' from prose into enforcement.
+
+    Read-modify-write under an exclusive flock so concurrent reviewer calls can't lose
+    an increment (which would let the cap be silently exceeded)."""
+    blocker_id = blocker_id.strip()
+    if not blocker_id:
+        raise ValueError("blocker --id must be non-empty")
+    path = _active_path()
+    with open(path, "r+") as fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX)
+        except OSError:
+            pass  # locking unsupported → still correct single-threaded
+        run = json.load(fh)
+        if not isinstance(run, dict) or "path" not in run or "run_id" not in run:
+            raise ValueError("active_run.json is corrupt (missing path/run_id)")
+        blockers = run.get("blockers")
+        if not isinstance(blockers, dict):
+            blockers = {}
+        count = int(blockers.get(blocker_id, 0)) + 1
+        blockers[blocker_id] = count
+        run["blockers"] = blockers
+        run["iterations"] = int(run.get("iterations", 0)) + 1
+        fh.seek(0)
+        json.dump(run, fh)
+        fh.truncate()
+    _append(run["path"], run["run_id"], "blocker", {"blocker_id": blocker_id, "count": count}, now)
+    return count
+
+
 def end(*, outcome: str, iterations: int, tool_calls: int | None, now: float) -> None:
     active = _load_active()
     tc = active.get("tool_calls", 0) if tool_calls is None else tool_calls
@@ -116,6 +153,10 @@ def main(argv: Sequence[str] | None = None, now: float | None = None) -> int:
     pl.add_argument("--event", required=True)
     pl.add_argument("--json", default="{}")
 
+    pb = sub.add_parser("blocker", help="record a review BLOCKER (enforces the loop cap)")
+    pb.add_argument("--id", required=True, dest="blocker_id",
+                    help="stable slug identifying the blocker (same finding → same id)")
+
     pe = sub.add_parser("end")
     pe.add_argument("--outcome", required=True)
     pe.add_argument("--iterations", type=int, default=0)
@@ -129,6 +170,9 @@ def main(argv: Sequence[str] | None = None, now: float | None = None) -> int:
             print(run_id)
         elif args.cmd == "log":
             log(args.event, json.loads(args.json), now)
+        elif args.cmd == "blocker":
+            count = record_blocker(args.blocker_id, now)
+            print(count)
         elif args.cmd == "end":
             end(outcome=args.outcome, iterations=args.iterations,
                 tool_calls=args.tool_calls, now=now)

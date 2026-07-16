@@ -71,3 +71,15 @@ def test_log_rejects_non_object_json(tmp_path, monkeypatch):
     ft.main(["start", "--task", "t", "--triage", "SMALL", "--git-ref", "r"], now=T0)
     assert ft.main(["log", "--event", "x", "--json", "[1,2]"], now=T0) == 1
     assert ft.main(["log", "--event", "x", "--json", "5"], now=T0) == 1
+
+
+def test_record_blocker_increments_and_enforces(tmp_path, monkeypatch):
+    import json as _j
+    monkeypatch.setenv("FORGE_HOME", str(tmp_path))
+    ft.start(task="add refund", triage="MEDIUM", git_ref="HEAD", ceiling=40, slug="r", now=1000.0)
+    assert ft.record_blocker("authz", now=1001.0) == 1
+    assert ft.record_blocker("authz", now=1002.0) == 2
+    assert ft.record_blocker("other", now=1003.0) == 1
+    run = _j.loads((tmp_path / "active_run.json").read_text())
+    assert run["blockers"] == {"authz": 2, "other": 1}
+    assert run["iterations"] == 3
