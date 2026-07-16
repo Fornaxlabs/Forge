@@ -34,7 +34,11 @@ python3 evals/prove_guard.py
 
 `selfaudit/forge_doctor.py` audits the guard **that is actually wired to the blocking
 PreToolUse event** (resolved from `hooks.json`, not a fixed path), and behaviour-tests
-it. Behaviour, not file-hashes; what runs, not what's on disk.
+it **by running it as a subprocess through its real `main()`/`decide()` entrypoint** —
+the exact dispatch Claude Code executes, not the helper functions in isolation. Behaviour,
+not file-hashes; what *runs*, not what's on disk. (A prior version tested the helpers
+directly, so a gutted `decide()` bypassed everything unseen — found by adversarial
+review, now closed.)
 
 - **Self-audit on this repo: `verdict: OK` (10/10 checks pass).**
 - **Nine tamper classes are caught** (each covered by a regression test):

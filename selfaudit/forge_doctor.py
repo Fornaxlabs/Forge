@@ -30,6 +30,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import time
 from collections.abc import Sequence
@@ -218,44 +219,60 @@ def check_no_foreign_hooks(root: str) -> Check:
     hooks = _read_hooks(root)
     if hooks is None:
         return Check("no-foreign-hooks", FAIL, "hooks.json missing or invalid")
-    foreign = [cmd for cmd in _event_commands(hooks) if not _blessed(_canonical_guard_path(cmd, root), root)]
-    if foreign:
-        return Check("no-foreign-hooks", WARN, f"unreviewed hook command(s): {foreign}")
+    pre_foreign = [c for c in _event_commands(hooks, "PreToolUse")
+                   if not _blessed(_canonical_guard_path(c, root), root)]
+    other_foreign = [c for c in _event_commands(hooks)
+                     if not _blessed(_canonical_guard_path(c, root), root) and c not in pre_foreign]
+    if pre_foreign:
+        # A foreign command on the blocking PreToolUse event can defeat the stateful
+        # controls (e.g. delete/rewrite active_run.json) → this is a FAIL, not advisory.
+        return Check("no-foreign-hooks", FAIL,
+                     f"unblessed command wired to the blocking PreToolUse event: {pre_foreign}")
+    if other_foreign:
+        return Check("no-foreign-hooks", WARN, f"unreviewed hook command(s) on non-blocking events: {other_foreign}")
     return Check("no-foreign-hooks", OK, "every hook is a canonical blessed Forge script")
 
 
-def check_guard_denies(guard: Any) -> Check:
+def _guard_exit(guard_path: str, command: str, forge_home: str | None = None) -> int:
+    """Run the guard file EXACTLY as Claude Code does — as a subprocess, piping the
+    tool payload to stdin → main() → decide() — and return its exit code (2 = block).
+    This is the crux: the audit must test the EXECUTED dispatch, not the helper
+    functions in isolation, or a gutted `decide()` bypasses every control unseen."""
+    env = {**os.environ}
+    if forge_home is not None:
+        env["FORGE_HOME"] = forge_home
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}})
     try:
-        leaked = [c for c in CANARIES if not guard.is_denied(c)]
-    except Exception as exc:  # noqa: BLE001 — a guard that raises is a FAIL, not a crash
-        return Check("guard-denies-catastrophic", FAIL, f"guard.is_denied raised: {exc}")
+        p = subprocess.run(
+            [sys.executable, guard_path], input=payload, capture_output=True, text=True,
+            timeout=15, env=env,
+        )
+        return p.returncode
+    except Exception:  # noqa: BLE001 — a guard that can't even run is not blocking anything
+        return -1
+
+
+def check_guard_denies(guard_path: str) -> Check:
+    """Every catastrophic canary, fed through the real entrypoint, must exit 2."""
+    leaked = [c for c in CANARIES if _guard_exit(guard_path, c) != 2]
     if leaked:
-        return Check("guard-denies-catastrophic", FAIL, f"deny-list weakened — got through: {leaked}")
-    return Check("guard-denies-catastrophic", OK, f"all {len(CANARIES)} catastrophic canaries blocked")
+        return Check("guard-denies-catastrophic", FAIL, f"guard did not block (exit≠2 via decide): {leaked}")
+    return Check("guard-denies-catastrophic", OK, f"all {len(CANARIES)} canaries blocked through decide()")
 
 
-def check_guard_allows_safe(guard: Any) -> Check:
-    try:
-        blocked = [c for c in SAFE if guard.is_denied(c)]
-    except Exception as exc:  # noqa: BLE001
-        return Check("guard-allows-safe", FAIL, f"guard.is_denied raised: {exc}")
+def check_guard_allows_safe(guard_path: str) -> Check:
+    """Every ordinary-safe command, through the real entrypoint, must exit 0."""
+    blocked = [c for c in SAFE if _guard_exit(guard_path, c) != 0]
     if blocked:
-        return Check("guard-allows-safe", FAIL, f"deny-list over-broad — blocks: {blocked}")
-    return Check("guard-allows-safe", OK, f"all {len(SAFE)} safe commands allowed")
+        return Check("guard-allows-safe", FAIL, f"guard blocked safe commands (exit≠0 via decide): {blocked}")
+    return Check("guard-allows-safe", OK, f"all {len(SAFE)} safe commands allowed through decide()")
 
 
-def _with_forge_home(fn: Any) -> Any:
-    """Run fn(tmp_dir) with FORGE_HOME pointed at a throwaway dir, then restore."""
-    prev = os.environ.get("FORGE_HOME")
+def _temp_run_dir(fn: Any) -> Any:
     tmp = tempfile.mkdtemp(prefix="forge-doctor-")
     try:
-        os.environ["FORGE_HOME"] = tmp
         return fn(tmp)
     finally:
-        if prev is None:
-            os.environ.pop("FORGE_HOME", None)
-        else:
-            os.environ["FORGE_HOME"] = prev
         import shutil
 
         shutil.rmtree(tmp, ignore_errors=True)
@@ -268,49 +285,34 @@ def _write_active(tmp: str, **fields: Any) -> None:
         json.dump(run, fh)
 
 
-def check_ceiling_behaves(guard: Any) -> Check:
-    """Behaviour-test the tool-call ceiling: drive it past a small limit and assert
-    it trips. A neutered `tick_and_check` (always False) is caught here."""
-    tick = getattr(guard, "tick_and_check", None)
-    if not callable(tick):
-        return Check("ceiling-enforced", FAIL, "tick_and_check() missing — loop-brake removed")
-
+def check_ceiling_behaves(guard_path: str) -> Check:
+    """Drive the real entrypoint past a small ceiling; the 3rd call must exit 2.
+    Catches a neutered tick_and_check AND a gutted decide() (which never calls it)."""
     def run(tmp: str) -> Check:
         _write_active(tmp, ceiling=2)
-        try:
-            results = [bool(tick()), bool(tick()), bool(tick())]  # counts 1,2,3 vs ceiling 2
-        except Exception as exc:  # noqa: BLE001
-            return Check("ceiling-enforced", FAIL, f"tick_and_check raised: {exc}")
-        if results == [False, False, True]:
-            return Check("ceiling-enforced", OK, "ceiling trips past the limit")
+        codes = [_guard_exit(guard_path, "ls -la", forge_home=tmp) for _ in range(3)]
+        if codes == [0, 0, 2]:
+            return Check("ceiling-enforced", OK, "ceiling trips past the limit through decide()")
         return Check("ceiling-enforced", FAIL,
-                     f"ceiling not enforced (tick sequence {results}, expected F,F,T)")
+                     f"ceiling not enforced through decide() (exit sequence {codes}, expected 0,0,2)")
 
-    return _with_forge_home(run)
+    return _temp_run_dir(run)
 
 
-def check_iteration_cap_behaves(guard: Any) -> Check:
-    """Behaviour-test the loop cap: with iteration_cap=2, a blocker seen 1× must NOT
-    breach and seen 3× MUST breach. A neutered `iteration_breached` is caught here —
-    without this the second of the guard's two blocking controls is unaudited."""
-    fn = getattr(guard, "iteration_breached", None)
-    if not callable(fn):
-        return Check("loop-cap-enforced", FAIL, "iteration_breached() missing — loop cap removed")
-
+def check_iteration_cap_behaves(guard_path: str) -> Check:
+    """Through the real entrypoint: a blocker seen 1× must exit 0, seen 3× (over the
+    cap of 2) must exit 2. Catches a neutered iteration_breached AND a gutted decide()."""
     def run(tmp: str) -> Check:
-        try:
-            _write_active(tmp, iteration_cap=2, blockers={"x": 1})
-            under = bool(fn())
-            _write_active(tmp, iteration_cap=2, blockers={"x": 3})
-            over = bool(fn())
-        except Exception as exc:  # noqa: BLE001
-            return Check("loop-cap-enforced", FAIL, f"iteration_breached raised: {exc}")
-        if under is False and over is True:
-            return Check("loop-cap-enforced", OK, "loop cap trips past the iteration limit")
+        _write_active(tmp, iteration_cap=2, blockers={"x": 1})
+        under = _guard_exit(guard_path, "ls -la", forge_home=tmp)
+        _write_active(tmp, iteration_cap=2, blockers={"x": 3})
+        over = _guard_exit(guard_path, "ls -la", forge_home=tmp)
+        if under == 0 and over == 2:
+            return Check("loop-cap-enforced", OK, "loop cap trips past the limit through decide()")
         return Check("loop-cap-enforced", FAIL,
-                     f"loop cap not enforced (under-cap={under}, over-cap={over}, expected False,True)")
+                     f"loop cap not enforced through decide() (under-cap={under}, over-cap={over}, expected 0,2)")
 
-    return _with_forge_home(run)
+    return _temp_run_dir(run)
 
 
 def _uncommented_lines(path: str) -> list[str]:
@@ -380,13 +382,13 @@ def run_audit(root: str) -> list[Check]:
     """Run every self-audit check against the enforcement layer at `root`.
     Fails CLOSED: if the wired guard cannot be loaded, that is a FAIL, not a skip."""
     checks: list[Check] = []
-    guard, path, wiring_checks = resolve_wired_guard(root)
+    _guard, path, wiring_checks = resolve_wired_guard(root)
     checks.extend(wiring_checks)
-    if guard is not None:
-        checks.append(check_guard_denies(guard))
-        checks.append(check_guard_allows_safe(guard))
-        checks.append(check_ceiling_behaves(guard))
-        checks.append(check_iteration_cap_behaves(guard))
+    if path is not None:
+        checks.append(check_guard_denies(path))
+        checks.append(check_guard_allows_safe(path))
+        checks.append(check_ceiling_behaves(path))
+        checks.append(check_iteration_cap_behaves(path))
     checks.append(check_no_foreign_hooks(root))
     checks.extend(check_secret_gates(root))
     checks.append(check_plan_mode_first(root))

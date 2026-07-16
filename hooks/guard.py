@@ -155,6 +155,10 @@ def iteration_breached(now: float | None = None) -> bool:
         return False
     try:
         with open(path) as fh:
+            try:
+                fcntl.flock(fh, fcntl.LOCK_SH)  # shared read lock: never read a torn write
+            except OSError:
+                pass
             run = json.load(fh)
     except (OSError, ValueError):
         return False

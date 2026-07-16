@@ -56,7 +56,7 @@ def probe_git(d: str) -> dict[str, Any]:
         "last_commit": subject.strip()[:80],
         "last_commit_ago": ago.strip(),
         "uncommitted_files": uncommitted,
-        "has_remote": rc == 0 and "github.com" in remote or "gitlab" in remote or (remote.strip() != "" and "not-installed" not in remote),
+        "has_remote": bool(rc == 0 and remote.strip() and "not-installed" not in remote),
         "remote": remote.strip() if remote.strip() and "not-installed" not in remote else None,
     }
 
@@ -72,22 +72,27 @@ def probe_github(d: str) -> dict[str, Any]:
         pr_list = json.loads(prs) if prs.strip().startswith("[") else []
     except ValueError:
         pr_list = []
+    # Bind CI to the CERTIFIED commit (HEAD), not "the most recent run on any branch"
+    # — a green run elsewhere must not vouch for a broken HEAD.
+    _, head = _run(["git", "rev-parse", "HEAD"], d)
+    head = head.strip()
     rc2, runs = _run(
-        ["gh", "run", "list", "--limit", "1", "--json", "status,conclusion,name"], d, timeout=15
+        ["gh", "run", "list", "--limit", "20", "--json", "headSha,status,conclusion"], d, timeout=15
     )
-    ci = "unknown"
+    ci = "no run for HEAD"
     try:
-        rl = json.loads(runs) if runs.strip().startswith("[") else []
-        if rl:
-            r0 = rl[0]
-            ci = (r0.get("conclusion") or r0.get("status") or "unknown")
+        for r in (json.loads(runs) if runs.strip().startswith("[") else []):
+            if r.get("headSha") == head:
+                ci = r.get("conclusion") or r.get("status") or "unknown"
+                break
     except ValueError:
-        pass
+        ci = "unknown"
     return {
         "connected": True,
         "open_prs": len(pr_list),
         "pr_titles": [p.get("title", "")[:60] for p in pr_list[:3]],
         "latest_ci": ci,
+        "ci_commit": head[:12],
     }
 
 
@@ -228,17 +233,38 @@ def probe_deps(d: str) -> dict[str, Any]:
     return {"manifest": manifest, "known_vulns": "see pip-audit" if found else "could not resolve"}
 
 
+def _is_valid_trace(path: str) -> bool:
+    """A governed run must contain BOTH a run_start and a run_end event — so an empty
+    `touch fake.jsonl` cannot inflate the count (which would forge L3 provenance)."""
+    try:
+        events = set()
+        with open(path) as fh:
+            for ln in fh:
+                ln = ln.strip()
+                if not ln:
+                    continue
+                rec = json.loads(ln)
+                if isinstance(rec, dict) and isinstance(rec.get("event"), str):
+                    events.add(rec["event"])
+        return "run_start" in events and "run_end" in events
+    except (OSError, ValueError):
+        return False
+
+
 def probe_forge(d: str) -> dict[str, Any]:
     fdir = os.path.join(d, ".forge")
     installed = os.path.isdir(fdir)
+    # forge_trace writes to FORGE_HOME/runs (default .forge/runs) — count only VALID
+    # traces there, not any .jsonl a hand can drop in.
+    runs_dir = os.path.join(fdir, "runs")
     runs = 0
-    runs_dir = os.path.join(d, "traces", "runs")
     if os.path.isdir(runs_dir):
-        runs = sum(1 for fn in os.listdir(runs_dir) if fn.endswith(".jsonl"))
+        runs = sum(1 for fn in os.listdir(runs_dir)
+                   if fn.endswith(".jsonl") and _is_valid_trace(os.path.join(runs_dir, fn)))
     return {
         "installed": installed,
         "governed_runs": runs,
-        "note": None if runs else "No Forge-governed runs recorded yet — live workers/pipeline are empty until you run /forge here.",
+        "note": None if runs else "No valid Forge-governed runs (run_start+run_end) recorded yet — pipeline/provenance empty until you run /forge here.",
     }
 
 
