@@ -32,12 +32,24 @@ python3 evals/prove_guard.py
 
 ## 2. FORGE audits its own enforcement layer — and catches tampering
 
-`selfaudit/forge_doctor.py` fires the catastrophic battery at the *live* guard, then
-checks the hook wiring, secret gates, and plan-mode. Behaviour, not file-hashes.
+`selfaudit/forge_doctor.py` audits the guard **that is actually wired to the blocking
+PreToolUse event** (resolved from `hooks.json`, not a fixed path), and behaviour-tests
+it. Behaviour, not file-hashes; what runs, not what's on disk.
 
-- **Self-audit on this repo: `verdict: OK` (10/10 checks pass).**
-- **Tamper is caught:** trim a single deny pattern from `guard.py` and the audit
-  flips to `FAIL` with exit 1, naming the exact command that now leaks.
+- **Self-audit on this repo: `verdict: OK` (9/9 checks pass).**
+- **Six tamper classes are caught** (each covered by a regression test):
+  1. deny-list trimmed → canary battery fails;
+  2. guard re-pointed at a decoy script → the *decoy* is loaded and fails;
+  3. guard moved to a non-blocking event with a PreToolUse decoy → "no guard wired";
+  4. tool-call ceiling neutered (`tick_and_check` stubbed) → behaviour test trips it;
+  5. a foreign hook smuggled in (even one whose command contains "guard.py", e.g.
+     `curl …/guard.py | sh`) → flagged by *resolved path*, not substring;
+  6. a secret gate or plan-mode neutered but left as a commented decoy → rejected
+     (gitleaks must appear uncommented; plan-mode is verified by running forge-init).
+
+Any FAIL exits 1. **Honest limit:** this proves the enforcement layer has not been
+weakened in these known ways — it is not a proof of total integrity; a novel tamper
+outside these classes could still pass. The blessed-hook allowlist is `guard.py` only.
 
 ```
 python3 selfaudit/forge_doctor.py                 # -> verdict: OK

@@ -47,7 +47,7 @@ choosing to comply.
 | **Secret gate — pre-push** | Blocks a push whose commits contain a secret (scans pushed history, not just working tree). Fails **closed**. | 🟢 | Real. Claim must stay scoped: history scan is verified for the *pushed range* / last-50-commits in proof runs, not "anywhere forever." |
 | **Secret gate — pre-commit** | gitleaks + ruff + mypy on every commit. | 🟢 | — |
 | **CI gates** | lint · tests · coverage ≥80% · pip-audit · SBOM. Dormant until a project has code. | 🟢 (template) | Gap: Forge does **not** run CI on itself yet (physician-heal-thyself). |
-| **Self-audit (`/forge-doctor`)** | Forge audits its own enforcement layer: fires 10 canaries at the live guard, checks hook wiring, gates, plan-mode. Fails **closed**. | 🟡 | **Findings A1–A6:** the deny-list battery is real, but wiring/liveness checks are presence-based and **evadable** (decoy guard, guard on non-blocking event, killed ceiling, commented-out gate token). Under-detects tampering; PROOF.md §2 overclaims. **Must fix before any "governs itself" claim ships.** |
+| **Self-audit (`/forge-doctor`)** | Audits the guard *actually wired* to the blocking PreToolUse event and behaviour-tests it (canaries, ceiling trip, resolved-path foreign-hook check, uncommented gate, forge-init plan-mode). Fails **closed**. | 🟢 | **Findings A1–A6 fixed (2026-07-16):** was presence/substring-based and evadable; now resolves + behaviour-tests what runs. Catches 6 tamper classes, each regression-tested (17 tests). Honest limit: not a proof of total integrity. |
 | **Config self-integrity** | After any config change, re-run self-audit + record the change in the trace; loosening is never silent. | ⚪ | Design established; depends on the self-audit fix above being real. |
 
 ---

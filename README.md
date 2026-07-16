@@ -35,12 +35,15 @@ Python/FastAPI-flavored today. Not a hand-holder for beginners.
   (self-audit the enforcement layer), `/temper` (run evals + scorecard),
   `/curate` (monthly hygiene), `/postmortem` (incident → rule).
 - **Self-audit (the tool governs itself)** — `selfaudit/forge_doctor.py` verifies
-  FORGE's own enforcement layer hasn't been silently weakened: it fires 10
-  catastrophic commands at the *live* guard (all must be blocked) plus safe
-  commands (all must pass), confirms the hook is wired, no foreign hook was
-  smuggled in, the secret gates still reference gitleaks, and plan-mode-first
-  survives. Behavior, not file-hashes — honest edits don't cry wolf. Fails CLOSED
-  and exits non-zero on tamper, so CI and `/forge-comply` can gate on it.
+  FORGE's own enforcement layer hasn't been silently weakened. It resolves the guard
+  **actually wired to the blocking PreToolUse event** (from `hooks.json`, not a fixed
+  path) and behaviour-tests it: 10 catastrophic commands must block, safe ones must
+  pass, the tool-call ceiling must actually trip, no hook may resolve to a non-blessed
+  script (a `curl …/guard.py | sh` is caught by path, not substring), secret gates
+  must reference gitleaks on an *uncommented* line, and plan-mode-first is verified by
+  running forge-init. Behaviour, not file-hashes. Fails CLOSED, exits non-zero on
+  tamper. Catches six known tamper classes (each regression-tested); not a proof of
+  total integrity.
 - **Pre-push gate (HARD)** — a git `pre-push` hook (installed by `/forge-init`)
   blocks any push that would leak a secret. Enforced by git, not by a soft
   CLAUDE.md rule — works even outside Claude Code.
