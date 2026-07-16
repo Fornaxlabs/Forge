@@ -1,0 +1,33 @@
+# FORGE dogfoods its own gate: the harness runs the same quality + proof checks it
+# stamps into governed projects. All jobs must be green before merge.
+name: forge-ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install ruff mypy pytest coverage
+      - name: lint
+        run: ruff check .
+      - name: types
+        run: mypy selfaudit hooks traces memory status evals
+      - name: tests + coverage (fail under 80%)
+        run: |
+          python3 -m coverage run -m pytest -q
+          python3 -m coverage report --include="hooks/*,memory/*,traces/*,selfaudit/*" --fail-under=80
+      - name: guard proof (24/24 block, 0% false positive)
+        run: python3 evals/prove_guard.py
+      - name: self-audit (Forge governs itself)
+        run: python3 selfaudit/forge_doctor.py
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: gitleaks/gitleaks-action@v2

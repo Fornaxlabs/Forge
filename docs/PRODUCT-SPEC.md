@@ -121,9 +121,11 @@ verifiable claims, never "secure."** Machine-verified lines are separate from AI
 
 | Level | Claim | Evidence | Status |
 |---|---|---|---|
-| **L1 — Gated** | Enforcement is armed (guard, pre-push, CI wired). | config + self-audit | ⚪ |
-| **L2 — Verified** | All endpoint checks green at this commit (0 secrets in the scanned range, CI green, 0 known CVEs, coverage ≥ gate, SBOM published). | CI artifact tied to commit SHA | ⚪ |
-| **L3 — Provenanced** | Every change went plan → guarded build → adversarial review → gate. | the trace history | ⚪ |
+| **L1 — Gated** | Enforcement is armed (pre-push, CI, pre-commit). | `forge_certify` | 🟢 built |
+| **L2 — Verified** | All endpoint checks green at this commit (secrets clean in scanned history, CI green, 0 known CVEs, self-audit intact). | `forge_certify` + collector | 🟢 built |
+| **L3 — Provenanced** | Every change went plan → guarded build → review → gate. | the trace history | ⚪ (needs governed-run history) |
+
+> **Built 2026-07-17:** `status/forge_certify.py` + `/forge-certify`. Real: FornaxOS certifies **L2**, Forge itself **L1** (no CI run yet). L3 honestly gated on `traces/` governed-run history (0 today). Machine-verified claims only, never "secure".
 
 **Design rules (from the research + findings):**
 - Endpoint badges are a crowded market (Sonar AI Code Assurance, etc.) — **L3 process-provenance is the empty, defensible niche.** Differentiator vs Entire (well-funded, records the trail): they record what the agent *did*; Forge enforces what it *must* do — "could not have done otherwise" is the stronger basis.
