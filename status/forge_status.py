@@ -134,31 +134,44 @@ def _gitleaks_scan(base_args: list[str], cwd: str, timeout: float) -> Any:
 
 
 def probe_secrets(d: str, history: bool) -> dict[str, Any]:
+    """Scan COMMITTED content, not the working directory. `gitleaks dir` flags every
+    high-entropy string in untracked data/caches/media (thousands of false positives
+    in a data-heavy repo); `gitleaks git` only sees tracked commits — the real "did a
+    secret get committed" question. This is a quick signal, NOT authoritative: the
+    pre-push gate (scanning the commits being pushed) is the real check."""
     if not _has("gitleaks"):
         return {"tool": "gitleaks", "status": "not installed"}
     allowlist = os.path.isfile(os.path.join(d, ".gitleaks.toml"))
-    tree = _gitleaks_scan(["gitleaks", "dir", "."], d, timeout=120)
-    if tree is None:
+    pre_push = os.path.isfile(os.path.join(d, ".git", "hooks", "pre-push"))
+    _, cnt = _run(["git", "rev-list", "--count", "HEAD"], d)
+    try:
+        n_commits = int(cnt.strip())
+    except (ValueError, AttributeError):
+        n_commits = 0
+    if n_commits == 0:
+        return {"tool": "gitleaks", "status": "no commits to scan"}
+
+    args = ["gitleaks", "git"]
+    if not history and n_commits > 50:
+        args.append("--log-opts=HEAD~50..HEAD")
+        scope = "last 50 commits"
+    else:
+        scope = "full history"
+    scan = _gitleaks_scan(args, d, timeout=200 if scope == "full history" else 90)
+    if scan is None:
         return {"tool": "gitleaks", "status": "not installed"}
-    if tree == "timeout":
-        return {"tool": "gitleaks", "status": "timeout (repo too large)"}
-    result: dict[str, Any] = {
+    if not isinstance(scan, dict):
+        return {"tool": "gitleaks", "status": f"{scan} (scope: {scope})", "scope": scope}
+    return {
         "tool": "gitleaks",
-        "tree_findings": tree["real"],
-        "tree_noise_excluded": tree["noise"],
-        "clean_tree": tree["real"] == 0,
+        "scope": scope,
+        "findings": scan["real"],
+        "noise_excluded": scan["noise"],
+        "clean": scan["real"] == 0,
         "allowlist": allowlist,
-        "note": "excludes vendored/data/binary; add a .gitleaks.toml to allowlist accepted matches"
-        if not allowlist else "honors the project's .gitleaks.toml",
+        "pre_push_gate": pre_push,
+        "note": "quick scan of committed content; the pre-push gate is the authoritative check",
     }
-    if history:
-        hist = _gitleaks_scan(["gitleaks", "git"], d, timeout=180)
-        if isinstance(hist, dict):
-            result["history_findings"] = hist["real"]
-            result["history_noise_excluded"] = hist["noise"]
-        else:
-            result["history_findings"] = str(hist)
-    return result
 
 
 def probe_enforcement(d: str) -> dict[str, Any]:
@@ -253,10 +266,9 @@ def _fmt(s: dict[str, Any]) -> str:
         f"  git      · {g['branch']} · {g['last_commit_ago']} · {g['uncommitted_files']} uncommitted · last: {g['last_commit']}",
         "  github   · " + ("connected · %s open PR · CI %s" % (gh.get("open_prs"), gh.get("latest_ci")) if gh.get("connected") else "not connected (%s)" % gh.get("reason")),
         "  secrets  · " + (
-            "clean tree ✓" if sec.get("clean_tree") else
-            (f"{sec.get('tree_findings')} real finding(s) in tree" if sec.get("tree_findings") is not None else str(sec.get("status", "?")))
-        ) + (f" ({sec['tree_noise_excluded']} vendored/data excluded)" if sec.get("tree_noise_excluded") else "")
-        + (f" · history: {sec['history_findings']} real" if "history_findings" in sec else "")
+            f"clean ✓ ({sec.get('scope')})" if sec.get("clean") else
+            (f"{sec.get('findings')} finding(s) in {sec.get('scope')}" if sec.get("findings") is not None else str(sec.get("status", "?")))
+        ) + (f" · pre-push gate={'yes' if sec.get('pre_push_gate') else 'MISSING'}" if "pre_push_gate" in sec else "")
         + (f" · allowlist={'yes' if sec.get('allowlist') else 'MISSING'}" if "allowlist" in sec else ""),
         f"  gates    · {armed}/6 armed  (pre-commit-cfg={enf['pre_commit_config']}, installed={enf['pre_commit_installed']}, pre-push={enf['pre_push_gate']}, CI={enf['ci_workflow']}, allowlist={enf['gitleaks_allowlist']}, plan-mode={enf['plan_mode_first']})",
         f"  tests    · {s['tests']['test_files']} test files · coverage {s['tests']['coverage']}",
