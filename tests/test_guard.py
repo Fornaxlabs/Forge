@@ -140,3 +140,42 @@ def test_compound_no_false_positive(cmd):
 ])
 def test_compound_real_danger_still_blocked(cmd):
     assert guard.is_denied(cmd) is True
+
+
+# --- loop-cap enforcement (2026-07-16): guard blocks once a blocker exceeds cap ---
+
+def _active(tmp_path, blockers, cap=3, age=0):
+    import time as _t
+    home = tmp_path / ".forge"
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "active_run.json").write_text(json.dumps({
+        "run_id": "r", "path": str(home / "runs" / "r.jsonl"),
+        "started_at": _t.time() - age, "tool_calls": 0,
+        "iteration_cap": cap, "blockers": blockers,
+    }))
+    return str(home)
+
+
+def test_iteration_not_breached_under_cap(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", _active(tmp_path, {"authz": 3}))  # 3 == cap, allowed
+    assert guard.iteration_breached() is False
+
+
+def test_iteration_breached_over_cap(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", _active(tmp_path, {"authz": 4}))  # 4 > cap
+    assert guard.iteration_breached() is True
+
+
+def test_decide_blocks_on_loop_cap(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", _active(tmp_path, {"authz": 4}))
+    assert guard.decide({"tool_input": {"command": "ls"}}) == 2  # safe cmd, still blocked
+
+
+def test_stale_run_ignores_blockers(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", _active(tmp_path, {"authz": 9}, age=7 * 3600))
+    assert guard.iteration_breached() is False  # stale run never holds the shell hostage
+
+
+def test_no_active_run_no_breach(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", str(tmp_path / "nope"))
+    assert guard.iteration_breached() is False

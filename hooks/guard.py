@@ -38,6 +38,11 @@ _STATIC_DENY = [
 
 # Default ceiling; a run may override via active_run.json.
 DEFAULT_CEILING = 40
+# Loop discipline: max review iterations on the SAME blocker before a human must
+# take over. Enforced here (not just prose): once the reviewer has recorded a
+# blocker this many times (via `forge_trace blocker --id`), the next tool call in
+# the run is blocked. A run may override via active_run.json ("iteration_cap").
+DEFAULT_ITERATION_CAP = 3
 STALE_SECONDS = 6 * 3600  # ignore an active run older than this (crash safety)
 
 
@@ -141,11 +146,46 @@ def tick_and_check(now: float | None = None) -> bool:
         return False
 
 
+def iteration_breached(now: float | None = None) -> bool:
+    """True iff the active run has hit the same blocker more than the iteration cap.
+    Read-only (never mutates the run file). No active/stale run, or any error → False,
+    so this can never wedge an unrelated shell — same fail-open contract as the ceiling."""
+    path = _active_run_path()
+    if not os.path.exists(path):
+        return False
+    try:
+        with open(path) as fh:
+            run = json.load(fh)
+    except (OSError, ValueError):
+        return False
+    if not isinstance(run, dict):
+        return False
+    started = run.get("started_at", 0)
+    now = time.time() if now is None else now
+    if not started or (now - started) > STALE_SECONDS:
+        return False
+    cap = int(run.get("iteration_cap", DEFAULT_ITERATION_CAP))
+    blockers = run.get("blockers", {})
+    if not isinstance(blockers, dict):
+        return False
+    try:
+        return any(int(v) > cap for v in blockers.values())
+    except (TypeError, ValueError):
+        return False
+
+
 def decide(payload: dict[str, Any]) -> int:
     ti = payload.get("tool_input") or {}
     command = ti.get("command", "") if isinstance(ti, dict) else ""
     if command and is_denied(command):
         print("FORGE guard: destructive command blocked", file=sys.stderr)
+        return 2
+    if iteration_breached():
+        print(
+            "FORGE guard: loop cap — the same blocker exceeded the iteration limit; "
+            "attribute (PLAN|CONTEXT|TOOL|CAPABILITY) and escalate to a human",
+            file=sys.stderr,
+        )
         return 2
     if tick_and_check():
         print(
