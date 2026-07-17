@@ -6,10 +6,11 @@ Input: forge_status.py JSON (one or more projects), optionally enriched with a
 page — inline CSS, inline vanilla JS, zero external requests.
 
 Three tabs, one project selector:
-  Dashboard  — plain-language verdict + Forge Verified level + the one top fix.
+  Dashboard  — a designed hero per project: big verdict, Forge Verified badge,
+               plain-language fact tiles, and the one top fix as a callout.
   Advanced   — every real signal as expandable cards (git, GitHub, secrets with
-               scope, the 6 enforcement gates, tests, deps, forge, certificate
-               claims with evidence).
+               scope, the 6 enforcement gates as a segmented meter, tests, deps,
+               forge, certificate claims with evidence).
   Configure  — HONEST reframe: a static file cannot save settings, so this tab
                inspects the real config and shows the exact shell command for
                each change, plus a live guard-rule tester that ports the actual
@@ -37,7 +38,8 @@ from typing import Any
 # Design tokens — shared with the other Forge surfaces (dark/light aware).
 # Mono for telemetry, semantic status colors (allow/tool/review/block/escalate),
 # ember used sparingly as the brand accent (wordmark spark, focus ring, active
-# tab/filter). prefers-reduced-motion kills every transition.
+# tab/filter, the one attention chip). prefers-reduced-motion kills every
+# transition and animation (jump-cut, never lost content).
 # ---------------------------------------------------------------------------
 _CSS = """
 :root{--bg:#0E1116;--panel:#161B22;--elevated:#1C232D;--hairline:#262E3A;--ink:#E6EDF3;
@@ -61,234 +63,313 @@ _CSS = """
 
 *{box-sizing:border-box}
 [hidden]{display:none!important}
-body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.5;
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+font-size:14px;line-height:1.55;
 background-image:linear-gradient(var(--grid) 1px,transparent 1px),
 linear-gradient(90deg,var(--grid) 1px,transparent 1px);background-size:34px 34px}
-.wrap{min-height:100vh;padding:24px clamp(14px,3vw,40px) 60px}
-.maxw{max-width:1060px;margin:0 auto}
+.wrap{min-height:100vh;padding:16px clamp(14px,3vw,40px) 64px}
+.maxw{max-width:1120px;margin:0 auto}
 :focus-visible{outline:2px solid var(--ember);outline-offset:2px;border-radius:6px}
 code{font-family:var(--mono)}
 .ok{color:var(--allow)}.warn{color:var(--review)}.bad{color:var(--block)}.dim{color:var(--faint)}
 .info{color:var(--tool)}
 
-/* masthead + controls */
-.mast{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+@keyframes viewin{from{opacity:0;transform:translateY(6px)}}
+@keyframes panelin{from{opacity:0;transform:translateY(-4px)}}
+@keyframes popin{from{opacity:0;transform:scale(.9)}}
+@keyframes beat{0%,100%{opacity:.45}50%{opacity:1}}
+
+/* ================= top bar ================= */
+.topbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;position:sticky;top:0;
+z-index:10;padding:12px 0 10px;margin-bottom:4px;
+background:color-mix(in srgb,var(--bg) 90%,transparent);backdrop-filter:blur(8px)}
 .wordmark{font-family:var(--mono);font-weight:700;font-size:15px;letter-spacing:.12em;
 text-transform:uppercase;display:inline-flex;align-items:center;gap:8px}
 .spark{width:10px;height:10px;border-radius:2px;background:var(--ember);
-box-shadow:0 0 10px var(--ember);transform:rotate(45deg)}
-.sub{font-family:var(--mono);font-size:11.5px;color:var(--faint)}
-h1{font-size:clamp(20px,2.6vw,26px);margin:14px 0 4px;letter-spacing:-.02em;font-weight:680}
-.lede{color:var(--muted);max-width:70ch;margin:0 0 16px;font-size:13.5px}
-.controls{display:flex;align-items:center;justify-content:space-between;gap:12px;
-flex-wrap:wrap;margin:0 0 20px;position:sticky;top:0;z-index:5;padding:10px 0;
-background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(6px)}
-.scopebar{display:inline-flex;align-items:center;gap:9px;font-family:var(--mono);
-font-size:11px;color:var(--faint);letter-spacing:.06em;text-transform:uppercase}
-select.scope{appearance:none;-webkit-appearance:none;font-family:var(--mono);font-size:12.5px;
-font-weight:700;color:var(--ink);background:var(--panel);border:1px solid var(--hairline);
-border-radius:9px;padding:8px 30px 8px 12px;cursor:pointer;
+box-shadow:0 0 10px var(--ember);transform:rotate(45deg);flex:none}
+.sub{font-family:var(--mono);font-size:11px;color:var(--faint)}
+.psel{display:inline-flex;align-items:center;gap:8px}
+.psel-l{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.1em;
+text-transform:uppercase;color:var(--faint)}
+select.scope{appearance:none;-webkit-appearance:none;font-family:var(--mono);font-size:12px;
+font-weight:600;color:var(--ink);background:var(--elevated);border:1px solid var(--hairline);
+border-radius:8px;padding:6px 26px 6px 10px;cursor:pointer;transition:border-color .15s;
 background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),
 linear-gradient(135deg,var(--muted) 50%,transparent 50%);
-background-position:right 15px top 55%,right 10px top 55%;background-size:5px 5px;
+background-position:right 13px top 55%,right 8px top 55%;background-size:5px 5px;
 background-repeat:no-repeat}
-select.scope:hover{border-color:var(--faint)}
-.tabs{display:inline-flex;gap:4px;background:var(--panel);border:1px solid var(--hairline);
-border-radius:12px;padding:4px}
-.tab{font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.03em;
-padding:8px 16px;border-radius:8px;border:0;background:none;color:var(--muted);cursor:pointer;
-display:inline-flex;align-items:center;gap:7px;transition:color .15s,background .15s}
-.tab .td{width:6px;height:6px;border-radius:2px;background:var(--hairline);transform:rotate(45deg)}
+select.scope:hover{border-color:var(--muted)}
+.tabs{margin-left:auto;display:inline-flex;gap:3px;background:var(--panel);
+border:1px solid var(--hairline);border-radius:11px;padding:3px}
+.tab{font-family:var(--mono);font-size:11.5px;font-weight:700;letter-spacing:.05em;
+padding:7px 16px;border-radius:8px;border:0;background:none;color:var(--muted);
+cursor:pointer;transition:color .15s,background .15s,box-shadow .15s}
 .tab:hover{color:var(--ink)}
 .tab[aria-selected=true]{background:var(--elevated);color:var(--ink);
-box-shadow:inset 0 0 0 1px var(--hairline)}
-.tab[aria-selected=true] .td{background:var(--ember);box-shadow:0 0 8px var(--ember)}
-
-/* panels */
-.panel{margin:0}
-.paneltitle{display:none;font-family:var(--mono);font-size:12px;letter-spacing:.14em;
-text-transform:uppercase;color:var(--faint);border-bottom:1px solid var(--hairline);
-padding-bottom:6px;margin:30px 0 14px}
-html:not(.js) .controls{display:none}
-html:not(.js) .paneltitle{display:block}
+box-shadow:inset 0 0 0 1px var(--hairline),inset 0 -2px 0 var(--ember)}
+h1{font-size:clamp(19px,2.4vw,24px);margin:16px 0 4px;letter-spacing:-.02em;font-weight:720}
+.lede{color:var(--muted);max-width:70ch;margin:0 0 22px;font-size:13.5px}
+@media(max-width:640px){.topbar{position:static}.tabs{margin-left:0;width:100%;display:flex}
+.tab{flex:1;text-align:center}}
+html:not(.js) .psel{display:none}
+html:not(.js) .tabs{display:none}
 html:not(.js) .js-only{display:none!important}
-html:not(.js) .chev{display:none}
+html:not(.js) .car{display:none}
 html:not(.js) .fchip{display:none}
 
-/* dashboard hero */
-.hero{background:var(--panel);border:1px solid var(--hairline);border-left:4px solid var(--vc);
-border-radius:16px;box-shadow:var(--shadow);padding:20px 22px;margin-bottom:14px}
+/* ================= views ================= */
+.view{min-width:0}
+.js .view{display:none}
+.js .view.active{display:block;animation:viewin .22s ease}
+.viewlabel{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.14em;
+text-transform:uppercase;color:var(--faint);border-top:2px solid var(--hairline);
+padding-top:14px;margin:30px 0 12px}
+.js .viewlabel{display:none}
+.card{background:var(--panel);border:1px solid var(--hairline);border-radius:16px;
+box-shadow:var(--shadow);padding:20px 22px;min-width:0}
+
+/* ================= dashboard hero ================= */
 .v-bad{--vc:var(--block)}.v-warn{--vc:var(--review)}.v-ok{--vc:var(--allow)}
-.herotop{display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start;justify-content:space-between}
-.hname{font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.1em;
-text-transform:uppercase;color:var(--muted)}
-.hpath{font-family:var(--mono);font-size:10px;color:var(--faint);word-break:break-all}
-.hverdict{font-size:clamp(22px,3vw,30px);font-weight:750;letter-spacing:-.02em;margin:6px 0 2px}
+.hero{margin-bottom:18px;border-left:4px solid var(--vc);padding:22px 24px 20px}
+.herotop{display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap}
+.dico{width:54px;height:54px;border-radius:14px;flex:none;display:grid;place-items:center;
+color:var(--vc);background:color-mix(in srgb,var(--vc) 12%,transparent)}
+.dico svg{width:30px;height:30px}
+.hmain{flex:1 1 300px;min-width:0}
+.hname{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.1em;
+text-transform:uppercase;color:var(--muted);display:flex;gap:10px;align-items:baseline;
+flex-wrap:wrap}
+.hpath{font-family:var(--mono);font-size:10px;font-weight:400;letter-spacing:0;
+text-transform:none;color:var(--faint);word-break:break-all}
+.hverdict{font-size:clamp(23px,3.2vw,31px);font-weight:750;letter-spacing:-.02em;
+margin:6px 0 4px;line-height:1.15}
 .hverdict .vword{color:var(--vc)}
-.hverdict .vneeds{color:var(--muted);font-weight:600;font-size:.62em}
-.hsub{color:var(--muted);font-size:13px;max-width:60ch}
-.cert{display:flex;gap:12px;align-items:center;border:1px solid var(--hairline);
-border-radius:12px;padding:10px 14px;background:var(--elevated);max-width:360px}
-.certlv{font-family:var(--mono);font-weight:800;font-size:17px;min-width:46px;height:46px;
-border-radius:10px;display:inline-flex;align-items:center;justify-content:center;flex:none;
-color:var(--lc);background:color-mix(in srgb,var(--lc) 13%,transparent);
-border:1px solid color-mix(in srgb,var(--lc) 45%,transparent)}
+.hsub{color:var(--muted);font-size:13.5px;max-width:62ch;margin:0 0 12px}
+.hchips{display:flex;gap:8px;flex-wrap:wrap}
+.hchip{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.04em;
+padding:5px 12px;border-radius:999px;border:1px solid var(--hairline);
+background:var(--elevated);color:var(--muted);display:inline-flex;align-items:center;gap:7px}
+.hchip.att{color:var(--ember);border-color:color-mix(in srgb,var(--ember) 50%,var(--hairline));
+background:color-mix(in srgb,var(--ember) 9%,var(--elevated))}
+.hchip.okc{color:var(--allow)}
+.hdot{width:8px;height:8px;border-radius:50%;background:currentColor;flex:none;
+animation:beat 2s ease-in-out infinite}
+.cert{flex:none;display:flex;gap:13px;align-items:center;border-radius:14px;
+padding:12px 16px;max-width:350px;background:color-mix(in srgb,var(--lc) 6%,var(--elevated));
+border:1px solid color-mix(in srgb,var(--lc) 32%,var(--hairline))}
 .lv-0{--lc:var(--faint)}.lv-1{--lc:var(--tool)}.lv-2{--lc:var(--allow)}.lv-3{--lc:var(--escalate)}
-.certname{font-weight:700;font-size:12.5px}
-.certwhy{font-size:11px;color:var(--muted);line-height:1.45;margin-top:1px}
-.facts{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
-.fact{font-family:var(--mono);font-size:11px;color:var(--muted);border:1px solid var(--hairline);
-background:var(--elevated);border-radius:999px;padding:5px 12px;display:inline-flex;
-align-items:center;gap:7px}
-.fact .d{width:7px;height:7px;border-radius:50%;flex:none}
-.d-ok{background:var(--allow)}.d-warn{background:var(--review)}.d-bad{background:var(--block)}
-.d-dim{background:var(--faint)}
-.hfix{margin-top:16px;border:1px solid var(--hairline);border-radius:12px;padding:13px 15px;
-background:var(--elevated);border-left:3px solid var(--sc)}
+.certmark{width:48px;height:48px;border-radius:12px;flex:none;display:grid;place-items:center;
+font-family:var(--mono);font-weight:800;font-size:17px;color:var(--lc);
+background:color-mix(in srgb,var(--lc) 13%,transparent);
+border:1px solid color-mix(in srgb,var(--lc) 45%,transparent);
+box-shadow:0 0 18px color-mix(in srgb,var(--lc) 16%,transparent)}
+.certname{font-weight:700;font-size:13px}
+.certwhy{font-size:11.5px;color:var(--muted);line-height:1.5;margin-top:2px}
+/* fact tiles */
+.facts{display:flex;flex-wrap:wrap;gap:1px;
+background:var(--hairline);border:1px solid var(--hairline);border-radius:13px;
+overflow:hidden;margin-top:18px}
+.fact{flex:1 1 150px;background:var(--panel);padding:13px 16px 14px;display:flex;
+flex-direction:column;gap:2px;min-width:0;transition:background .15s}
+.fact:hover{background:var(--elevated)}
+.fact .fn{font-family:var(--mono);font-size:21px;line-height:28px;font-weight:700;
+font-variant-numeric:tabular-nums;letter-spacing:-.01em;overflow-wrap:anywhere}
+.fact .fn.fn-sm{font-size:13px}
+.fact .ft{font-size:12.5px;font-weight:600;color:var(--ink)}
+.fact .fs{font-size:11px;color:var(--faint);overflow-wrap:anywhere}
+.f-ok .fn{color:var(--allow)}.f-warn .fn{color:var(--review)}
+.f-bad .fn{color:var(--block)}.f-dim .fn{color:var(--faint)}
+/* the one fix callout */
 .sev-block{--sc:var(--block)}.sev-review{--sc:var(--review)}.sev-tool{--sc:var(--tool)}
 .sev-ok{--sc:var(--allow)}
-.hfixlab{font-family:var(--mono);font-size:10.5px;font-weight:700;letter-spacing:.1em;
-text-transform:uppercase;color:var(--sc);margin-bottom:3px}
-.hfixtitle{font-weight:700;font-size:14px}
-.hfixwhy{color:var(--muted);font-size:12.5px;margin-top:2px;max-width:75ch}
-.cmd{display:flex;align-items:center;gap:10px;background:var(--panel);
-border:1px solid var(--hairline);border-radius:9px;padding:8px 11px;margin-top:9px}
-.cmd code{font-size:11.5px;white-space:pre;overflow-x:auto;flex:1;display:block;
+.hfix{margin-top:16px;border-radius:13px;padding:15px 17px;
+border:1px solid color-mix(in srgb,var(--sc) 32%,var(--hairline));
+border-left:3px solid var(--sc);background:color-mix(in srgb,var(--sc) 5%,var(--panel))}
+.hfix.sev-block{box-shadow:0 0 24px color-mix(in srgb,var(--sc) 10%,transparent)}
+.hfixhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px}
+.hfixlab{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.09em;
+text-transform:uppercase;color:var(--sc);padding:3px 9px;border-radius:999px;flex:none;
+background:color-mix(in srgb,var(--sc) 14%,transparent)}
+.hfixtitle{font-weight:700;font-size:14.5px}
+.hfixwhy{color:var(--muted);font-size:13px;margin:0;max-width:75ch}
+.cmd{display:flex;align-items:center;gap:10px;background:var(--elevated);
+border:1px solid var(--hairline);border-radius:10px;padding:9px 12px;margin-top:11px}
+.cmd code{font-size:12px;white-space:pre;overflow-x:auto;flex:1;display:block;
 color:var(--ink);scrollbar-width:thin}
 .copy{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.06em;
-text-transform:uppercase;color:var(--muted);background:var(--elevated);
-border:1px solid var(--hairline);border-radius:6px;padding:4px 9px;cursor:pointer;flex:none}
-.copy:hover{color:var(--ink);border-color:var(--faint)}
-.linklike{background:none;border:0;color:var(--tool);font:inherit;font-size:12px;
-cursor:pointer;padding:0;margin-top:10px;text-decoration:underline;
+text-transform:uppercase;color:var(--muted);background:var(--panel);
+border:1px solid var(--hairline);border-radius:7px;padding:5px 10px;cursor:pointer;
+flex:none;transition:color .15s,border-color .15s}
+.copy:hover{color:var(--ink);border-color:var(--muted)}
+.copy.done{color:var(--allow);border-color:color-mix(in srgb,var(--allow) 45%,var(--hairline))}
+.linklike{background:none;border:0;color:var(--tool);font:inherit;font-size:12.5px;
+cursor:pointer;padding:0;margin-top:12px;text-decoration:underline;
 text-underline-offset:3px;display:inline-block}
+.linklike:hover{color:var(--ink)}
 
-/* fleet strip */
-.fleetstrip{background:var(--panel);border:1px solid var(--hairline);border-radius:14px;
-box-shadow:var(--shadow);padding:14px 18px;margin-bottom:16px}
-.fleetrow{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:7px 0;
-border-top:1px solid var(--hairline);font-size:13px}
-.fleetrow:first-of-type{border-top:0}
-.fleetrow .fn{font-weight:700;min-width:130px}
-.fleetcounts{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-bottom:6px}
-.vbadge{font-family:var(--mono);font-size:10.5px;font-weight:700;padding:3px 10px;
-border-radius:999px;color:var(--vc);background:color-mix(in srgb,var(--vc) 13%,transparent);
-white-space:nowrap}
+/* ================= fleet strip ================= */
+.fleetstrip{margin-bottom:18px;padding:16px 20px}
+.fleetcounts{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.1em;
+text-transform:uppercase;color:var(--faint);margin-bottom:6px}
+.fleetrow{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:10px 8px;
+margin:0 -8px;border-top:1px solid var(--hairline);border-radius:10px;font-size:13px;
+transition:background .15s}
+.fleetrow:hover{background:var(--elevated)}
+.fleetrow .fn2{font-weight:700;font-size:14px;min-width:130px}
+.vpill{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.06em;
+text-transform:uppercase;padding:3px 10px;border-radius:999px;color:var(--vc);flex:none;
+background:color-mix(in srgb,var(--vc) 13%,transparent);white-space:nowrap}
 .lvchip{font-family:var(--mono);font-size:10.5px;font-weight:800;padding:3px 9px;
 border-radius:6px;color:var(--lc);background:color-mix(in srgb,var(--lc) 13%,transparent);
-border:1px solid color-mix(in srgb,var(--lc) 40%,transparent);white-space:nowrap}
-.ftop{font-family:var(--mono);font-size:11px;color:var(--muted);flex:1;min-width:150px;
+border:1px solid color-mix(in srgb,var(--lc) 40%,transparent);white-space:nowrap;flex:none}
+.ftop{font-family:var(--mono);font-size:11px;color:var(--muted);flex:1;min-width:160px;
 overflow-wrap:anywhere}
 
-/* filter chips (advanced, fleet scope) */
+/* ================= filter chips (fleet scope, Advanced) ================= */
 .filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
-.fchip{font-family:var(--mono);font-size:11.5px;font-weight:700;padding:6px 12px;
-border-radius:999px;border:1px solid var(--hairline);background:var(--panel);color:var(--muted);
-display:inline-flex;gap:8px;align-items:center;cursor:pointer;transition:border-color .15s,color .15s}
+.fchip{font-family:var(--mono);font-size:11.5px;font-weight:700;padding:6px 13px;
+border-radius:999px;border:1px solid var(--hairline);background:var(--panel);
+color:var(--muted);display:inline-flex;gap:8px;align-items:center;cursor:pointer;
+transition:border-color .15s,color .15s,box-shadow .15s}
 .fchip .d{width:8px;height:8px;border-radius:50%;flex:none}
-.fchip .n{color:var(--ink)}
-.fchip:hover{border-color:var(--faint)}
+.fchip .n{color:var(--ink);font-variant-numeric:tabular-nums}
+.fchip:hover{border-color:var(--muted);color:var(--ink)}
 .fchip[aria-pressed=true]{border-color:var(--ember);color:var(--ink);
 box-shadow:inset 0 0 0 1px var(--ember)}
 .fleet-only{display:none}
 body.fleet .fleet-only{display:flex}
 .fhide{display:none!important}
 
-/* advanced: project block + signal cards */
-.pblock{margin-bottom:22px}
-.pbhead{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:10px}
-.pbname{font-size:16px;font-weight:750}
+/* ================= advanced: project block + signal cards ================= */
+.pblock{margin-bottom:26px}
+.pbhead{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:4px 0 12px}
+.pbname{font-size:17px;font-weight:750;letter-spacing:-.01em}
 .pbpath{font-family:var(--mono);font-size:10px;color:var(--faint);word-break:break-all}
-.sig{background:var(--panel);border:1px solid var(--hairline);border-radius:12px;
-box-shadow:var(--shadow);margin-bottom:8px;overflow:hidden}
+.sig{background:var(--panel);border:1px solid var(--hairline);border-radius:13px;
+box-shadow:var(--shadow);margin-bottom:10px;overflow:hidden;transition:border-color .15s}
+.sig:hover{border-color:color-mix(in srgb,var(--faint) 55%,var(--hairline))}
 .shead{display:flex;align-items:center;gap:14px;flex-wrap:wrap;width:100%;
-padding:12px 16px;background:none;border:0;color:inherit;font:inherit;text-align:left;
-cursor:pointer}
+padding:13px 18px;background:none;border:0;color:inherit;font:inherit;text-align:left;
+cursor:pointer;transition:background .15s}
 .shead:hover{background:var(--elevated)}
+.shead:hover .car{color:var(--ember)}
 .stitle{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.1em;
 text-transform:uppercase;color:var(--muted);min-width:120px}
 .ssum{font-family:var(--mono);font-size:11.5px;color:var(--muted);flex:1;min-width:200px;
-display:flex;gap:6px 14px;flex-wrap:wrap}
-.chev{color:var(--faint);flex:none;transition:transform .18s ease}
-.shead[aria-expanded=true] .chev{transform:rotate(180deg)}
-.sbody{padding:6px 16px 14px;border-top:1px solid var(--hairline)}
-.kv{display:flex;justify-content:space-between;gap:12px;padding:3px 0;font-size:12.5px}
+display:flex;gap:6px 14px;flex-wrap:wrap;font-variant-numeric:tabular-nums}
+.car{display:inline-block;font-size:10px;color:var(--faint);flex:none;
+transition:transform .18s ease,color .15s}
+.shead[aria-expanded=true] .car{transform:rotate(90deg);color:var(--ember)}
+.sbody{padding:6px 18px 16px;border-top:1px solid var(--hairline)}
+.js .sbody{display:none}
+.js .sbody.open{display:block;animation:panelin .18s ease}
+.kv{display:flex;justify-content:space-between;gap:12px;padding:4px 0;font-size:13px}
 .kk{font-family:var(--mono);font-size:11px;color:var(--faint);flex:none}
 .kx{text-align:right;min-width:0;overflow-wrap:anywhere}
-.kx.mono{font-family:var(--mono);font-size:11.5px}
-.note{margin-top:8px;font-size:11px;color:var(--faint);line-height:1.5}
-.commitmsg{margin-top:8px;font-family:var(--mono);font-size:11.5px;color:var(--muted);
-background:var(--elevated);border:1px solid var(--hairline);border-radius:7px;padding:6px 9px;
-overflow-wrap:anywhere}
-.mwrap{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);
-font-size:11px;color:var(--muted)}
+.kx.mono{font-family:var(--mono);font-size:11.5px;font-variant-numeric:tabular-nums}
+.note{margin-top:9px;font-size:11.5px;color:var(--faint);line-height:1.55}
+.commitmsg{margin-top:9px;font-family:var(--mono);font-size:11.5px;color:var(--muted);
+background:var(--elevated);border:1px solid var(--hairline);border-radius:8px;
+padding:7px 10px;overflow-wrap:anywhere}
+/* segmented gates meter */
+.mwrap{display:inline-flex;align-items:center;gap:9px;font-family:var(--mono);
+font-size:11.5px;color:var(--muted)}
 .meter{display:inline-flex;gap:3px}
-.meter i{width:13px;height:6px;border-radius:2px;background:var(--hairline)}
-.meter i.on{background:var(--gc)}
+.meter i{width:17px;height:8px;border-radius:3px;background:var(--hairline);
+transition:background .2s}
+.meter i.on{background:var(--gc);
+box-shadow:0 0 8px color-mix(in srgb,var(--gc) 45%,transparent)}
+.mn{font-weight:700;font-variant-numeric:tabular-nums;color:var(--gc)}
 .g-ok{--gc:var(--allow)}.g-warn{--gc:var(--review)}.g-bad{--gc:var(--block)}
-.gline{display:flex;justify-content:space-between;gap:12px;padding:3px 0;
-font-size:12px;font-family:var(--mono)}
+.gline{display:flex;justify-content:space-between;gap:12px;padding:4px 0;
+font-size:12.5px;font-family:var(--mono)}
 .gmark{font-weight:700;flex:none}
-.claim{display:flex;gap:10px;padding:7px 0;border-top:1px dashed var(--hairline);
+/* certificate claims checklist */
+.claim{display:flex;gap:10px;padding:9px 0;border-top:1px solid var(--hairline);
 font-size:12.5px}
-.claim:first-of-type{border-top:0}
+.claim:first-of-type{border-top:0;margin-top:6px}
+.claim .ck{font-family:var(--mono);font-weight:700;font-size:12px;flex:none;width:16px}
 .claim .cbody2{min-width:0}
 .claim b{font-family:var(--mono);font-size:11.5px}
 .claimev{color:var(--muted);font-size:11.5px;overflow-wrap:anywhere}
-.repro{font-family:var(--mono);font-size:10.5px;color:var(--faint);margin-top:2px;
+.repro{font-family:var(--mono);font-size:10.5px;color:var(--faint);margin-top:3px;
 overflow-wrap:anywhere}
-.planned{margin-top:6px;border-top:1px dashed var(--hairline);padding-top:8px;
+.planned{margin-top:8px;border-top:1px dashed var(--hairline);padding-top:9px;
 font-size:11px;color:var(--faint);font-family:var(--mono);line-height:1.55}
 .planned b{color:var(--muted)}
+.emptymsg{font-family:var(--mono);font-size:12.5px;color:var(--faint);
+border:1px dashed var(--hairline);border-radius:12px;padding:22px;text-align:center}
 
-/* configure */
-.cfgnote{border:1px solid var(--hairline);border-left:3px solid var(--tool);
-border-radius:12px;background:var(--panel);padding:12px 16px;font-size:12.5px;
-color:var(--muted);margin-bottom:16px;max-width:100%}
-.cfgblock{margin-bottom:24px}
-.cfggrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;
+/* ================= configure ================= */
+.rulenote{border:1px solid var(--hairline);border-left:3px solid var(--tool);
+border-radius:12px;background:color-mix(in srgb,var(--tool) 5%,var(--panel));
+padding:12px 16px;font-size:13px;color:var(--muted);margin-bottom:18px}
+.cfgblock{margin-bottom:26px}
+.cfggrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;
 align-items:start}
-.cfgcard{background:var(--panel);border:1px solid var(--hairline);border-radius:14px;
-box-shadow:var(--shadow);padding:16px 18px}
+.cfgcard{padding:18px 20px}
 .cfgh{font-family:var(--mono);font-size:10.5px;font-weight:700;letter-spacing:.12em;
-text-transform:uppercase;color:var(--faint);margin-bottom:10px}
-.fix{border-top:1px dashed var(--hairline);padding:11px 0}
+text-transform:uppercase;color:var(--faint);margin-bottom:12px;display:flex;gap:8px;
+align-items:center;flex-wrap:wrap}
+.cfgh .pill{font-size:9.5px;padding:2.5px 8px;border-radius:999px;letter-spacing:.08em;
+color:var(--allow);background:color-mix(in srgb,var(--allow) 13%,transparent)}
+.gate{display:flex;align-items:center;gap:10px;padding:9px 0;
+border-top:1px solid var(--hairline);font-size:13px;color:var(--ink)}
+.gate:first-of-type{border-top:0}
+.gate .ic{width:9px;height:9px;border-radius:3px;flex:none;background:var(--allow)}
+.gate.off .ic{background:var(--block)}
+.gate .st{margin-left:auto;font-family:var(--mono);font-size:10.5px;font-weight:700;
+letter-spacing:.06em;color:var(--allow)}
+.gate.off .st{color:var(--block)}
+.posture{display:flex;align-items:center;gap:10px;padding-bottom:10px;font-size:13px}
+.posture .pk{font-family:var(--mono);font-size:11px;color:var(--faint)}
+.posture .vpill{margin-left:auto}
+.fix{border-top:1px dashed var(--hairline);padding:12px 0}
 .fix:first-of-type{border-top:0;padding-top:2px}
-.fixtitle{font-weight:700;font-size:13px;display:flex;align-items:center;gap:8px}
+.fixtitle{font-weight:700;font-size:13.5px;display:flex;align-items:center;gap:8px}
 .sevdot{width:8px;height:8px;border-radius:50%;background:var(--sc);flex:none}
-.fixwhy{color:var(--muted);font-size:12px;margin-top:2px;max-width:75ch}
+.fixwhy{color:var(--muted);font-size:12.5px;margin-top:2px;max-width:75ch}
 .allgood{font-size:13px;color:var(--allow);font-weight:600}
-
 /* guard tester */
-.tester{background:var(--panel);border:1px solid var(--hairline);border-radius:14px;
-box-shadow:var(--shadow);padding:18px;margin-top:4px}
+.tester{margin-top:6px;padding:20px 22px}
+.gtlab{display:block;font-size:12.5px;color:var(--muted);margin-bottom:9px;max-width:80ch}
 .gin{width:100%;font-family:var(--mono);font-size:13px;padding:10px 12px;border-radius:9px;
-border:1px solid var(--hairline);background:var(--elevated);color:var(--ink)}
+border:1px solid var(--hairline);background:var(--elevated);color:var(--ink);
+transition:border-color .15s}
+.gin::placeholder{color:var(--faint)}
+.gin:hover{border-color:var(--muted)}
 .gin:focus{outline:2px solid var(--ember);outline-offset:1px}
-.gout{margin-top:10px;font-family:var(--mono);font-size:13px;font-weight:700;min-height:20px}
-.gout .why{font-weight:400;font-size:11.5px;color:var(--muted)}
-.gexs{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
-.gex{font-family:var(--mono);font-size:10.5px;color:var(--muted);background:var(--elevated);
-border:1px solid var(--hairline);border-radius:6px;padding:4px 9px;cursor:pointer}
-.gex:hover{color:var(--ink);border-color:var(--faint)}
+.gout{margin-top:12px;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;
+min-height:26px;font-size:12.5px;color:var(--muted)}
+.gt-verdict{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.08em;
+padding:4px 12px;border-radius:999px;flex:none}
+.js .gt-verdict{animation:popin .18s ease}
+.gt-verdict.blk{color:var(--block);background:color-mix(in srgb,var(--block) 14%,transparent)}
+.gt-verdict.alw{color:var(--allow);background:color-mix(in srgb,var(--allow) 12%,transparent)}
+.gexs{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px;align-items:center}
+.gexs .fl{font-family:var(--mono);font-size:10px;color:var(--faint);letter-spacing:.08em;
+text-transform:uppercase}
+.gex{font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--muted);
+background:var(--elevated);border:1px solid var(--hairline);border-radius:999px;
+padding:4px 10px;cursor:pointer;transition:color .15s,border-color .15s}
+.gex:hover{color:var(--ink);border-color:var(--muted)}
 
-.emptymsg{font-family:var(--mono);font-size:12.5px;color:var(--faint);border:1px dashed
-var(--hairline);border-radius:12px;padding:22px;text-align:center}
 .foot{margin-top:36px;padding-top:16px;border-top:1px solid var(--hairline);
 color:var(--faint);font-size:11.5px;font-family:var(--mono);line-height:1.6}
 
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;
 animation:none!important}}
-@media(max-width:640px){.controls{position:static}.ssum{order:5;width:100%}
-.herotop{flex-direction:column}}
+@media(max-width:640px){.herotop{flex-direction:column}
+.hmain{flex:0 0 auto;width:100%}.cert{max-width:none;width:100%}
+.ssum{order:5;width:100%}}
 """
 
 # ---------------------------------------------------------------------------
 # Inline JS. Vanilla, dependency-free, zero external requests. Runs only when
 # JS is available (the .js gate on <html> is set by a tiny head script); without
-# JS the page renders fully static: tabs stacked, every panel and card open.
-# The guard tester is a faithful client-side port of the built-in deny rules in
-# hooks/guard.py (same segmentation, same regexes) — see _JS comments.
+# JS the page renders fully static: tabs stacked with view labels, every card
+# open. The guard tester is a faithful client-side port of the built-in deny
+# rules in hooks/guard.py (same segmentation, same regexes) — see _JS comments.
 # ---------------------------------------------------------------------------
 _HEAD_JS = 'document.documentElement.className += " js";'
 
@@ -309,7 +390,7 @@ _JS = r"""
       var on = i === idx;
       t.setAttribute("aria-selected", on ? "true" : "false");
       t.tabIndex = on ? 0 : -1;
-      if (panels[i]) { panels[i].hidden = !on; }
+      if (panels[i]) { panels[i].classList.toggle("active", on); }
     });
     if (focus) { tabs[idx].focus(); }
   }
@@ -375,7 +456,7 @@ _JS = r"""
   function setOpen(btn, open) {
     var body = document.getElementById(btn.getAttribute("aria-controls"));
     btn.setAttribute("aria-expanded", open ? "true" : "false");
-    if (body) { body.hidden = !open; }
+    if (body) { body.classList.toggle("open", open); }
   }
   heads.forEach(function (btn) {
     setOpen(btn, false); // server renders open for no-JS; collapse for the app view
@@ -407,8 +488,12 @@ _JS = r"""
       var code = btn.parentNode.querySelector("code");
       var txt = code ? code.textContent : "";
       function done(ok) {
-        btn.textContent = ok ? "copied" : "copy failed";
-        setTimeout(function () { btn.textContent = "copy"; }, 1400);
+        btn.textContent = ok ? "copied ✓" : "copy failed";
+        btn.classList.toggle("done", ok);
+        setTimeout(function () {
+          btn.textContent = "copy";
+          btn.classList.remove("done");
+        }, 1400);
       }
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(txt).then(
@@ -472,24 +557,26 @@ _JS = r"""
   }
   var gin = document.getElementById("gcmd");
   var gout = document.getElementById("gout");
+  var lastVerdict = "";
   function judge() {
     if (!gin || !gout) { return; }
     var v = gin.value;
     if (!v.replace(/\s/g, "")) {
-      gout.className = "gout";
-      gout.innerHTML = '<span class="dim">type a command to test it against the deny rules</span>';
+      lastVerdict = "";
+      gout.innerHTML = '<span class="dim">verdict appears here as you type — nothing is executed</span>';
       return;
     }
     var why = whyDenied(v);
-    if (why) {
-      gout.className = "gout blocked";
-      gout.innerHTML = '<span class="bad">&#10007; BLOCKED</span> <span class="why"></span>';
-      gout.querySelector(".why").textContent = "matched rule: " + why;
-    } else {
-      gout.className = "gout allowed";
-      gout.innerHTML = '<span class="ok">&#10003; allowed</span> <span class="why">' +
-        "no built-in deny rule matched (project deny-extra.txt rules not evaluated here)</span>";
+    var verdict = why ? "blk" : "alw";
+    if (verdict !== lastVerdict) {
+      lastVerdict = verdict;
+      gout.innerHTML = why
+        ? '<span class="gt-verdict blk">&#10007; BLOCKED</span><span class="why"></span>'
+        : '<span class="gt-verdict alw">&#10003; allowed</span><span class="why"></span>';
     }
+    gout.querySelector(".why").textContent = why
+      ? "matched rule: " + why + " — denied before execution; the agent never sees the result."
+      : "no built-in deny rule matched (project deny-extra.txt rules not evaluated here).";
   }
   if (gin) {
     gin.addEventListener("input", judge);
@@ -499,6 +586,7 @@ _JS = r"""
     b.addEventListener("click", function () {
       if (gin) {
         gin.value = b.textContent;
+        lastVerdict = "";
         judge();
         gin.focus();
       }
@@ -533,6 +621,21 @@ _LEVEL_META = {
     "L2": ("L2", "Forge Verified — Verified", "lv-2"),
     "L3": ("L3", "Forge Verified — Provenanced", "lv-3"),
     "none": ("—", "Not certified", "lv-0"),
+}
+# hero icon per verdict — static inline SVG (stroke follows the verdict color)
+_SHIELD = ('M12 3l7 3v5c0 4.6-2.9 8.1-7 10-4.1-1.9-7-5.4-7-10V6z')
+_ICONS = {
+    "healthy": (f'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+                f'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+                f'<path d="{_SHIELD}"/><path d="M9 12.2l2.1 2.1L15.3 10"/></svg>'),
+    "under-protected": (f'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+                        f'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+                        f'<path d="{_SHIELD}"/><path d="M12 8.5v4"/>'
+                        f'<path d="M12 15.5h.01"/></svg>'),
+    "needs-attention": (f'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+                        f'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+                        f'<path d="{_SHIELD}"/><path d="M9.5 9.5l5 5"/>'
+                        f'<path d="M14.5 9.5l-5 5"/></svg>'),
 }
 
 
@@ -690,7 +793,7 @@ def _gates_meter(enf: dict[str, Any]) -> str:
     segs = "".join(f'<i class="{"on" if enf.get(k) else ""}"></i>' for k in _GATE_LABELS)
     return (f'<span class="mwrap {gcls}" role="img" aria-label="{_esc(label)}" '
             f'title="{_esc(label)}"><span class="meter" aria-hidden="true">{segs}</span>'
-            f"{armed}/{total}</span>")
+            f'<span class="mn">{armed}/{total}</span></span>')
 
 
 def _level_meta(cert: dict[str, Any] | None) -> tuple[str, str, str, str]:
@@ -721,34 +824,43 @@ def _level_meta(cert: dict[str, Any] | None) -> tuple[str, str, str, str]:
 # ---------------------------------------------------------------------------
 # Tab 1 — Dashboard (plain language)
 # ---------------------------------------------------------------------------
-def _fact(cls: str, text: str) -> str:
-    return (f'<span class="fact"><span class="d {cls}" aria-hidden="true"></span>'
-            f"{_esc(text)}</span>")
+def _fact(cls: str, value: str, label: str, sub: str) -> str:
+    vcls = "fn fn-sm" if len(value) > 8 else "fn"
+    return (f'<div class="fact {cls}"><span class="{vcls}">{_esc(value)}</span>'
+            f'<span class="ft">{_esc(label)}</span>'
+            f'<span class="fs">{_esc(sub)}</span></div>')
 
 
-def _plain_facts(p: dict[str, Any]) -> str:
+def _fact_tiles(p: dict[str, Any]) -> str:
     g, gh, sec, enf, forge = p["git"], p["github"], p["secrets"], p["enforcement"], p["forge"]
     facts: list[str] = []
     if sec.get("findings"):
-        facts.append(_fact("d-bad", f"possible secret found ({sec.get('scope', '?')}) — check now"))
+        facts.append(_fact("f-bad", str(int(sec["findings"])), "possible secret(s)",
+                           f"in {sec.get('scope', '?')} — check now"))
     elif sec.get("clean"):
-        facts.append(_fact("d-ok", f"no secrets found ({sec.get('scope', '?')})"))
+        facts.append(_fact("f-ok", "clean", "secrets",
+                           f"scanned: {sec.get('scope', '?')}"))
     else:
-        facts.append(_fact("d-dim", f"secret scan: {sec.get('status', '?')}"))
+        facts.append(_fact("f-dim", "—", "secrets", f"scan: {sec.get('status', '?')}"))
     armed = sum(bool(enf[k]) for k in enf)
-    cls = "d-ok" if armed >= 5 else ("d-warn" if armed >= 3 else "d-bad")
-    facts.append(_fact(cls, f"{armed} of {len(enf)} protections on"))
+    missing = [_GATE_LABELS.get(k, k) for k in _GATE_LABELS if not enf.get(k)]
+    cls = "f-ok" if armed >= 5 else ("f-warn" if armed >= 3 else "f-bad")
+    facts.append(_fact(cls, f"{armed}/{len(enf)}", "protections on",
+                       "all gates armed" if not missing
+                       else "missing: " + ", ".join(missing[:2])
+                       + (" +" + str(len(missing) - 2) if len(missing) > 2 else "")))
     if gh.get("connected"):
         ci = str(gh.get("latest_ci", "unknown"))
-        cic = {"ok": "d-ok", "bad": "d-bad", "dim": "d-dim"}[_ci_class(ci)]
-        facts.append(_fact(cic, f"CI: {ci} (current commit)"))
+        cic = {"ok": "f-ok", "bad": "f-bad", "dim": "f-dim"}[_ci_class(ci)]
+        facts.append(_fact(cic, ci, "CI", "bound to the current commit"))
     else:
-        facts.append(_fact("d-dim", "GitHub: not connected"))
+        facts.append(_fact("f-dim", "—", "CI", "GitHub not connected"))
     unc = int(g["uncommitted_files"])
-    facts.append(_fact("d-warn" if unc else "d-ok",
+    facts.append(_fact("f-warn" if unc else "f-ok", str(unc), "uncommitted",
                        f"{unc} file(s) not committed yet" if unc else "all work committed"))
     runs = int(forge["governed_runs"])
-    facts.append(_fact("d-ok" if runs else "d-dim", f"{runs} Forge-governed run(s)"))
+    facts.append(_fact("f-ok" if runs else "f-dim", str(runs), "governed runs",
+                       "real Forge-run history" if runs else "none yet — real count"))
     return f'<div class="facts">{"".join(facts)}</div>'
 
 
@@ -757,10 +869,11 @@ def _hero(p: dict[str, Any], i: int) -> str:
     fixes = _fixes(p)
     word = _VWORD[verdict]
     n = len(fixes)
-    needs = ""
     if n:
-        needs = (f' <span class="vneeds">&middot; {n} thing{"s" if n != 1 else ""} '
-                 f'need{"" if n != 1 else "s"} you</span>')
+        chip = (f'<span class="hchip att"><span class="hdot" aria-hidden="true"></span>'
+                f'{int(n)} thing{"s" if n != 1 else ""} need{"" if n != 1 else "s"} you</span>')
+    else:
+        chip = '<span class="hchip okc">&#10003; nothing needs you</span>'
     subs = {
         "healthy": "Push-time and commit-time protections are armed on this project.",
         "under-protected": "Key protections are off — this project is easier to hurt than it should be.",
@@ -768,7 +881,7 @@ def _hero(p: dict[str, Any], i: int) -> str:
     }
     glyph, name, lvcls, why = _level_meta(p.get("certificate"))
     cert_html = (
-        f'<div class="cert {lvcls}"><span class="certlv" aria-hidden="true">{_esc(glyph)}</span>'
+        f'<div class="cert {lvcls}"><span class="certmark" aria-hidden="true">{_esc(glyph)}</span>'
         f'<span><span class="certname">{_esc(name)}</span>'
         f'<div class="certwhy">{_esc(why)}</div></span></div>'
     )
@@ -780,25 +893,30 @@ def _hero(p: dict[str, Any], i: int) -> str:
                     f"{n - 1} more fix{'es' if n - 1 != 1 else ''} in Configure &rarr;</button>")
         sev = {"block": "sev-block", "review": "sev-review", "tool": "sev-tool"}[top["sev"]]
         fix_html = (
-            f'<div class="hfix {sev}"><div class="hfixlab">do this first</div>'
-            f'<div class="hfixtitle">{_esc(top["title"])}</div>'
-            f'<div class="hfixwhy">{_esc(top["why"])}</div>'
+            f'<div class="hfix {sev}"><div class="hfixhead">'
+            f'<span class="hfixlab">do this first</span>'
+            f'<span class="hfixtitle">{_esc(top["title"])}</span></div>'
+            f'<p class="hfixwhy">{_esc(top["why"])}</p>'
             f"{_cmdblock(top['cmd'])}{more}</div>"
         )
     else:
-        fix_html = ('<div class="hfix sev-ok"><div class="hfixlab">nothing to do</div>'
-                    '<div class="hfixtitle">Nothing needs you right now.</div>'
-                    '<div class="hfixwhy">Every setting this page inspects is at the '
-                    "recommended state.</div></div>")
+        fix_html = ('<div class="hfix sev-ok"><div class="hfixhead">'
+                    '<span class="hfixlab">nothing to do</span>'
+                    '<span class="hfixtitle">Nothing needs you right now.</span></div>'
+                    '<p class="hfixwhy">Every setting this page inspects is at the '
+                    "recommended state.</p></div>")
     return (
-        f'<section class="hero {_VCLASS[verdict]} scoped" data-p="{int(i)}">'
-        f'<div class="herotop"><div>'
-        f'<div class="hname">{_esc(p["project"])}</div>'
-        f'<div class="hpath">{_esc(p["path"])}</div>'
-        f'<div class="hverdict"><span class="vword">{_esc(word)}</span>{needs}</div>'
-        f'<p class="hsub">{_esc(subs[verdict])}</p></div>'
+        f'<section class="hero card {_VCLASS[verdict]} scoped" data-p="{int(i)}">'
+        f'<div class="herotop">'
+        f'<span class="dico" aria-hidden="true">{_ICONS[verdict]}</span>'
+        f'<div class="hmain">'
+        f'<div class="hname">{_esc(p["project"])} '
+        f'<span class="hpath">{_esc(p["path"])}</span></div>'
+        f'<h3 class="hverdict"><span class="vword">{_esc(word)}</span></h3>'
+        f'<p class="hsub">{_esc(subs[verdict])}</p>'
+        f'<div class="hchips">{chip}</div></div>'
         f"{cert_html}</div>"
-        f"{_plain_facts(p)}{fix_html}</section>"
+        f"{_fact_tiles(p)}{fix_html}</section>"
     )
 
 
@@ -812,16 +930,17 @@ def _fleet_strip(projects: list[dict[str, Any]]) -> str:
         glyph, _name, lvcls, _why = _level_meta(p.get("certificate"))
         top = _esc(fixes[0]["title"]) if fixes else '<span class="ok">nothing needs you</span>'
         rows.append(
-            f'<div class="fleetrow {_VCLASS[v]}"><span class="fn">{_esc(p["project"])}</span>'
-            f'<span class="vbadge">{_esc(_VWORD[v])}</span>'
+            f'<div class="fleetrow {_VCLASS[v]}"><span class="fn2">{_esc(p["project"])}</span>'
+            f'<span class="vpill">{_esc(_VWORD[v])}</span>'
             f'<span class="lvchip {lvcls}">{_esc(glyph)}</span>'
             f'<span class="ftop">{top}</span></div>'
         )
-    summary = (f"{int(counts['healthy'])} protected &middot; "
+    summary = (f"fleet &middot; {int(counts['healthy'])} protected &middot; "
                f"{int(counts['under-protected'])} under-protected &middot; "
                f"{int(counts['needs-attention'])} need attention")
-    return (f'<section class="fleetstrip scoped" data-p="fleet" aria-label="fleet overview">'
-            f'<div class="fleetcounts">fleet &middot; {summary}</div>{"".join(rows)}</section>')
+    return (f'<section class="fleetstrip card scoped" data-p="fleet" '
+            f'aria-label="fleet overview">'
+            f'<div class="fleetcounts">{summary}</div>{"".join(rows)}</section>')
 
 
 # ---------------------------------------------------------------------------
@@ -834,7 +953,7 @@ def _sigcard(pid: int, key: str, title: str, summary: str, body: str) -> str:
         f'aria-expanded="true" aria-controls="{did}">'
         f'<span class="stitle">{_esc(title)}</span>'
         f'<span class="ssum">{summary}</span>'
-        f'<span class="chev" aria-hidden="true">&#9662;</span></button>'
+        f'<span class="car" aria-hidden="true">&#9656;</span></button>'
         f'<div class="sbody" id="{did}" role="region" aria-labelledby="{hid}">{body}</div></div>'
     )
 
@@ -980,8 +1099,8 @@ def _card_certificate(p: dict[str, Any], i: int) -> str:
     rows = []
     for c in claims:
         ok = bool(c.get("passed"))
-        mark = ('<span class="gmark ok">&#10003;</span>' if ok
-                else '<span class="gmark bad">&#10007;</span>')
+        mark = ('<span class="ck ok">&#10003;</span>' if ok
+                else '<span class="ck bad">&#10007;</span>')
         rows.append(
             f'<div class="claim">{mark}<div class="cbody2">'
             f"<b>{_esc(c.get('name', '?'))}</b> "
@@ -1004,6 +1123,7 @@ def _card_certificate(p: dict[str, Any], i: int) -> str:
 
 def _advanced_block(p: dict[str, Any], i: int) -> str:
     verdict = _verdict(p)
+    glyph, _name, lvcls, _why = _level_meta(p.get("certificate"))
     cards = (
         _card_git(p, i) + _card_github(p, i) + _card_secrets(p, i) + _card_gates(p, i)
         + _card_tests_deps(p, i) + _card_forge(p, i) + _card_certificate(p, i)
@@ -1012,7 +1132,8 @@ def _advanced_block(p: dict[str, Any], i: int) -> str:
         f'<div class="pblock scoped {_VCLASS[verdict]}" data-p="{int(i)}" '
         f'data-verdict="{_esc(verdict)}">'
         f'<div class="pbhead"><span class="pbname">{_esc(p["project"])}</span>'
-        f'<span class="vbadge">{_esc(_VWORD[verdict])}</span>'
+        f'<span class="vpill">{_esc(_VWORD[verdict])}</span>'
+        f'<span class="lvchip {lvcls}">{_esc(glyph)}</span>'
         f'<span class="pbpath">{_esc(p["path"])}</span></div>{cards}</div>'
     )
 
@@ -1033,13 +1154,15 @@ def _configure_block(p: dict[str, Any], i: int) -> str:
     glines = []
     for key, label in _GATE_LABELS.items():
         on = bool(enf.get(key))
-        mark = ('<span class="gmark ok">&#10003; on</span>' if on
-                else '<span class="gmark bad">&#10007; off</span>')
-        glines.append(f'<div class="gline"><span>{_esc(label)}</span>{mark}</div>')
+        st = "ARMED" if on else "OFF"
+        glines.append(f'<div class="gate{"" if on else " off"}">'
+                      f'<span class="ic" aria-hidden="true"></span>{_esc(label)}'
+                      f'<span class="st">{_esc(st)}</span></div>')
     current = (
-        '<div class="cfgcard"><div class="cfgh">current config (read from the repo)</div>'
-        + _kv("protection posture",
-              f'<span class="vbadge {_VCLASS[verdict]}">{_esc(_VWORD[verdict])}</span>')
+        f'<div class="cfgcard card {_VCLASS[verdict]}">'
+        '<div class="cfgh">current config (read from the repo)</div>'
+        '<div class="posture"><span class="pk">protection posture</span>'
+        f'<span class="vpill">{_esc(_VWORD[verdict])}</span></div>'
         + "".join(glines)
         + '<div class="note">Bash deny rules: the built-in list ships with the Forge '
           "plugin (hooks/guard.py) and applies to every governed session; a project "
@@ -1055,7 +1178,7 @@ def _configure_block(p: dict[str, Any], i: int) -> str:
                 f'<span class="sevdot" aria-hidden="true"></span>{_esc(f["title"])}</div>'
                 f'<div class="fixwhy">{_esc(f["why"])}</div>{_cmdblock(f["cmd"])}</div>'
             )
-        changes = (f'<div class="cfgcard"><div class="cfgh">to change it — run these '
+        changes = (f'<div class="cfgcard card"><div class="cfgh">to change it — run these '
                    f"({len(fixes)})</div>" + "".join(items)
                    + '<div class="note">Run shell commands from the project root. '
                      "$CLAUDE_PLUGIN_ROOT is the Forge plugin checkout (set "
@@ -1063,7 +1186,7 @@ def _configure_block(p: dict[str, Any], i: int) -> str:
                      "path when running by hand). /forge-init is a Claude Code "
                      "command.</div></div>")
     else:
-        changes = ('<div class="cfgcard"><div class="cfgh">to change it</div>'
+        changes = ('<div class="cfgcard card"><div class="cfgh">to change it</div>'
                    '<div class="allgood">Nothing to change — every setting this page '
                    "inspects is at the recommended state.</div></div>")
     return (
@@ -1088,16 +1211,16 @@ def _tester() -> str:
     exs = "".join(f'<button type="button" class="gex js-only">{_esc(e)}</button>'
                   for e in _TESTER_EXAMPLES)
     return (
-        '<div class="tester"><div class="cfgh">guard tester — try the deny rules live</div>'
-        '<label class="sr" for="gcmd" style="display:block;font-size:12px;'
-        'color:var(--muted);margin-bottom:7px">Type a shell command; it is checked '
+        '<div class="tester card"><div class="cfgh">guard tester '
+        '<span class="pill js-only">live</span></div>'
+        '<label class="gtlab" for="gcmd">Type a shell command; it is checked '
         "against a client-side port of the built-in deny rules from hooks/guard.py "
         "(rm -rf on / or ~, force-push, mkfs, dd if=, DROP/TRUNCATE TABLE, fork bomb, "
         "chmod -R 777 /). Nothing is executed and nothing leaves this page.</label>"
         '<input type="text" id="gcmd" class="gin" autocomplete="off" spellcheck="false" '
-        'placeholder="e.g. git push --force origin main">'
+        'placeholder="e.g.  git push --force origin main">'
         '<div id="gout" class="gout" role="status" aria-live="polite"></div>'
-        f'<div class="gexs">{exs}</div>'
+        f'<div class="gexs"><span class="fl js-only">try</span>{exs}</div>'
         "<noscript><div class='note'>The live tester needs JavaScript. The same rules "
         "run for real in hooks/guard.py on every governed Bash call.</div></noscript>"
         '<div class="note">Best-effort footgun-catcher, not a security boundary '
@@ -1122,21 +1245,18 @@ def render(projects: list[dict[str, Any]], collected_at: str) -> str:
     tabs_html = (
         '<div class="tabs" role="tablist" aria-label="dashboard views">'
         '<button type="button" class="tab" role="tab" id="tab-dash" '
-        'aria-controls="panel-dash" aria-selected="true">'
-        '<span class="td" aria-hidden="true"></span>Dashboard</button>'
+        'aria-controls="panel-dash" aria-selected="true">Dashboard</button>'
         '<button type="button" class="tab" role="tab" id="tab-adv" '
-        'aria-controls="panel-adv" aria-selected="false" tabindex="-1">'
-        '<span class="td" aria-hidden="true"></span>Advanced</button>'
+        'aria-controls="panel-adv" aria-selected="false" tabindex="-1">Advanced</button>'
         '<button type="button" class="tab" role="tab" id="tab-cfg" '
-        'aria-controls="panel-cfg" aria-selected="false" tabindex="-1">'
-        '<span class="td" aria-hidden="true"></span>Configure</button></div>'
+        'aria-controls="panel-cfg" aria-selected="false" tabindex="-1">Configure</button></div>'
     )
 
     heroes = "".join(_hero(p, i) for i, p in enumerate(ordered))
     fleet = _fleet_strip(ordered) if ordered else ""
     dash_panel = (
-        '<section class="panel" id="panel-dash" role="tabpanel" aria-labelledby="tab-dash" '
-        f'tabindex="0"><h2 class="paneltitle">Dashboard</h2>{fleet}{heroes}</section>'
+        '<section class="view" id="panel-dash" role="tabpanel" aria-labelledby="tab-dash" '
+        f'tabindex="0"><h2 class="viewlabel">Dashboard</h2>{fleet}{heroes}</section>'
     )
 
     chips = (
@@ -1147,8 +1267,8 @@ def render(projects: list[dict[str, Any]], collected_at: str) -> str:
     )
     adv_blocks = "".join(_advanced_block(p, i) for i, p in enumerate(ordered))
     adv_panel = (
-        '<section class="panel" id="panel-adv" role="tabpanel" aria-labelledby="tab-adv" '
-        'tabindex="0"><h2 class="paneltitle">Advanced</h2>'
+        '<section class="view" id="panel-adv" role="tabpanel" aria-labelledby="tab-adv" '
+        'tabindex="0"><h2 class="viewlabel">Advanced</h2>'
         f'<div class="filters fleet-only" role="group" aria-label="filter projects by verdict">'
         f"{chips}</div>{adv_blocks}"
         '<div class="emptymsg" id="advEmpty" hidden>no projects match this filter</div></section>'
@@ -1156,9 +1276,9 @@ def render(projects: list[dict[str, Any]], collected_at: str) -> str:
 
     cfg_blocks = "".join(_configure_block(p, i) for i, p in enumerate(ordered))
     cfg_panel = (
-        '<section class="panel" id="panel-cfg" role="tabpanel" aria-labelledby="tab-cfg" '
-        'tabindex="0"><h2 class="paneltitle">Configure</h2>'
-        '<div class="cfgnote">Configure inspects your real config and tells you how to '
+        '<section class="view" id="panel-cfg" role="tabpanel" aria-labelledby="tab-cfg" '
+        'tabindex="0"><h2 class="viewlabel">Configure</h2>'
+        '<div class="rulenote">Configure inspects your real config and tells you how to '
         "change it; it does not edit files — Forge changes go through the CLI/hooks. "
         "Every command below is copy-pasteable and does exactly one thing.</div>"
         f"{cfg_blocks}{_tester()}</section>"
@@ -1176,14 +1296,15 @@ def render(projects: list[dict[str, Any]], collected_at: str) -> str:
         f"<script>{_HEAD_JS}</script>\n"
         f"<style>{_CSS}</style>\n"
         '</head>\n<body><div class="wrap"><div class="maxw">\n'
-        '<header><div class="mast"><span class="wordmark">'
+        '<header><div class="topbar"><span class="wordmark">'
         '<span class="spark" aria-hidden="true"></span> Forge</span>'
-        f'<span class="sub">real project status &middot; collected {_esc(collected_at)}</span>'
-        "</div>\n<h1>Your projects, as Forge actually sees them.</h1>\n"
+        f'<span class="sub">real status &middot; collected {_esc(collected_at)}</span>'
+        '<label class="psel"><span class="psel-l">project</span>'
+        f'<select id="scope" class="scope" aria-label="project scope">{options}</select>'
+        f"</label>{tabs_html}</div>\n"
+        "<h1>Your projects, as Forge actually sees them.</h1>\n"
         '<p class="lede">Every number on this page is collected live from the real '
         "repositories, read-only. Nothing is representative, projected, or mocked.</p>\n"
-        '<div class="controls"><div class="scopebar"><label for="scope">project</label>'
-        f'<select id="scope" class="scope">{options}</select></div>{tabs_html}</div>'
         f"</header>\n<main>{body}</main>\n"
         '<footer class="foot">real data &middot; read-only collection &middot; secrets '
         "scanned with --redact (no secret values read), scope always shown per project "
