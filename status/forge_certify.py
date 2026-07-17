@@ -60,13 +60,15 @@ def _self_audit_ok() -> tuple[bool, str]:
         return False, f"self-audit could not run: {exc}"
 
 
-class Claim(dict):
+class Claim(dict[str, Any]):
     def __init__(self, name: str, ok: bool, evidence: str, reproduce: str) -> None:
         super().__init__(name=name, passed=ok, evidence=evidence, reproduce=reproduce)
 
 
-def certify(d: str) -> dict[str, Any]:
-    s = forge_status.collect(d)
+def certify(d: str, status: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Assemble the certificate. Pass a pre-collected forge_status.collect() result
+    as `status` to avoid re-running the (slow, read-only) collection probes."""
+    s = forge_status.collect(d) if status is None else status
     enf, sec, gh, deps, forge = s["enforcement"], s["secrets"], s["github"], s["deps"], s["forge"]
 
     armed = bool(enf.get("pre_push_gate") and enf.get("ci_workflow") and enf.get("pre_commit_config"))

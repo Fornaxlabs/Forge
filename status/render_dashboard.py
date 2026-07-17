@@ -1,19 +1,30 @@
 #!/usr/bin/env python3
-"""Render the FORGE dashboard from REAL collector data — no mockup.
+"""Render the FORGE 3-tab dashboard from REAL collector data — no mockup.
 
-Reads forge_status.py JSON (one or more projects) and emits a single, fully
-self-contained HTML dashboard: inline CSS, inline vanilla JS, zero external
-requests. Everything shown is real, collected read-only from the actual repos.
-Capabilities Forge has not built yet (live workers, pipeline runs, engine
-tiering, certification) are shown as honest "not built yet" text — never faked.
+Input: forge_status.py JSON (one or more projects), optionally enriched with a
+"certificate" block by forge_dashboard.py. Output: one fully self-contained HTML
+page — inline CSS, inline vanilla JS, zero external requests.
 
-Every dynamic string that reaches the HTML goes through html.escape (commit
-messages, branch names, PR titles, paths, notes — all attacker-influenced).
-The only unescaped interpolations are integers we cast ourselves.
+Three tabs, one project selector:
+  Dashboard  — plain-language verdict + Forge Verified level + the one top fix.
+  Advanced   — every real signal as expandable cards (git, GitHub, secrets with
+               scope, the 6 enforcement gates, tests, deps, forge, certificate
+               claims with evidence).
+  Configure  — HONEST reframe: a static file cannot save settings, so this tab
+               inspects the real config and shows the exact shell command for
+               each change, plus a live guard-rule tester that ports the actual
+               deny rules from hooks/guard.py to client-side JS.
+
+Honesty rules baked in: capabilities Forge has not built yet are "not built
+yet", never faked; secrets always carry their scan scope; the certificate shows
+its real level and why it is not higher. Every dynamic string that reaches the
+HTML goes through html.escape (project names, paths, branches, commit messages,
+PR titles, remotes, notes, evidence — all attacker-influenced). The only
+unescaped interpolations are integers we cast ourselves.
 
 Usage:
+  python3 forge_dashboard.py <dirs...> -o dashboard.html          (full, with certificate)
   python3 forge_status.py <dirs...> --json | python3 render_dashboard.py > dashboard.html
-  python3 render_dashboard.py status.json > dashboard.html
 """
 from __future__ import annotations
 
@@ -24,8 +35,9 @@ from typing import Any
 
 # ---------------------------------------------------------------------------
 # Design tokens — shared with the other Forge surfaces (dark/light aware).
-# Mono for telemetry, semantic status colors (allow/review/block), ember used
-# sparingly as the brand accent (wordmark spark, focus ring, active filter).
+# Mono for telemetry, semantic status colors (allow/tool/review/block/escalate),
+# ember used sparingly as the brand accent (wordmark spark, focus ring, active
+# tab/filter). prefers-reduced-motion kills every transition.
 # ---------------------------------------------------------------------------
 _CSS = """
 :root{--bg:#0E1116;--panel:#161B22;--elevated:#1C232D;--hairline:#262E3A;--ink:#E6EDF3;
@@ -48,28 +60,129 @@ _CSS = """
 --shadow:0 1px 0 rgba(255,255,255,.6),0 10px 30px rgba(20,30,50,.10);}
 
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.5;
 background-image:linear-gradient(var(--grid) 1px,transparent 1px),
 linear-gradient(90deg,var(--grid) 1px,transparent 1px);background-size:34px 34px}
-.wrap{min-height:100vh;padding:26px clamp(14px,3vw,40px) 60px}
-.maxw{max-width:1100px;margin:0 auto}
+.wrap{min-height:100vh;padding:24px clamp(14px,3vw,40px) 60px}
+.maxw{max-width:1060px;margin:0 auto}
 :focus-visible{outline:2px solid var(--ember);outline-offset:2px;border-radius:6px}
+code{font-family:var(--mono)}
+.ok{color:var(--allow)}.warn{color:var(--review)}.bad{color:var(--block)}.dim{color:var(--faint)}
+.info{color:var(--tool)}
 
-/* masthead */
-.mast{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:4px}
+/* masthead + controls */
+.mast{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
 .wordmark{font-family:var(--mono);font-weight:700;font-size:15px;letter-spacing:.12em;
 text-transform:uppercase;display:inline-flex;align-items:center;gap:8px}
 .spark{width:10px;height:10px;border-radius:2px;background:var(--ember);
 box-shadow:0 0 10px var(--ember);transform:rotate(45deg)}
-.sub{font-family:var(--mono);font-size:12px;color:var(--faint)}
-h1{font-size:clamp(22px,3vw,30px);margin:14px 0 6px;letter-spacing:-.02em;font-weight:680}
-.lede{color:var(--muted);max-width:66ch;margin:0 0 20px;font-size:14.5px}
-.lede code{font-family:var(--mono);font-size:12.5px;background:var(--elevated);
-border:1px solid var(--hairline);border-radius:5px;padding:1px 5px}
+.sub{font-family:var(--mono);font-size:11.5px;color:var(--faint)}
+h1{font-size:clamp(20px,2.6vw,26px);margin:14px 0 4px;letter-spacing:-.02em;font-weight:680}
+.lede{color:var(--muted);max-width:70ch;margin:0 0 16px;font-size:13.5px}
+.controls{display:flex;align-items:center;justify-content:space-between;gap:12px;
+flex-wrap:wrap;margin:0 0 20px;position:sticky;top:0;z-index:5;padding:10px 0;
+background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(6px)}
+.scopebar{display:inline-flex;align-items:center;gap:9px;font-family:var(--mono);
+font-size:11px;color:var(--faint);letter-spacing:.06em;text-transform:uppercase}
+select.scope{appearance:none;-webkit-appearance:none;font-family:var(--mono);font-size:12.5px;
+font-weight:700;color:var(--ink);background:var(--panel);border:1px solid var(--hairline);
+border-radius:9px;padding:8px 30px 8px 12px;cursor:pointer;
+background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),
+linear-gradient(135deg,var(--muted) 50%,transparent 50%);
+background-position:right 15px top 55%,right 10px top 55%;background-size:5px 5px;
+background-repeat:no-repeat}
+select.scope:hover{border-color:var(--faint)}
+.tabs{display:inline-flex;gap:4px;background:var(--panel);border:1px solid var(--hairline);
+border-radius:12px;padding:4px}
+.tab{font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.03em;
+padding:8px 16px;border-radius:8px;border:0;background:none;color:var(--muted);cursor:pointer;
+display:inline-flex;align-items:center;gap:7px;transition:color .15s,background .15s}
+.tab .td{width:6px;height:6px;border-radius:2px;background:var(--hairline);transform:rotate(45deg)}
+.tab:hover{color:var(--ink)}
+.tab[aria-selected=true]{background:var(--elevated);color:var(--ink);
+box-shadow:inset 0 0 0 1px var(--hairline)}
+.tab[aria-selected=true] .td{background:var(--ember);box-shadow:0 0 8px var(--ember)}
 
-/* filter chips (also the summary bar) */
-.filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:22px}
-.fchip{font-family:var(--mono);font-size:12px;font-weight:700;padding:7px 13px;
+/* panels */
+.panel{margin:0}
+.paneltitle{display:none;font-family:var(--mono);font-size:12px;letter-spacing:.14em;
+text-transform:uppercase;color:var(--faint);border-bottom:1px solid var(--hairline);
+padding-bottom:6px;margin:30px 0 14px}
+html:not(.js) .controls{display:none}
+html:not(.js) .paneltitle{display:block}
+html:not(.js) .js-only{display:none!important}
+html:not(.js) .chev{display:none}
+html:not(.js) .fchip{display:none}
+
+/* dashboard hero */
+.hero{background:var(--panel);border:1px solid var(--hairline);border-left:4px solid var(--vc);
+border-radius:16px;box-shadow:var(--shadow);padding:20px 22px;margin-bottom:14px}
+.v-bad{--vc:var(--block)}.v-warn{--vc:var(--review)}.v-ok{--vc:var(--allow)}
+.herotop{display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start;justify-content:space-between}
+.hname{font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.1em;
+text-transform:uppercase;color:var(--muted)}
+.hpath{font-family:var(--mono);font-size:10px;color:var(--faint);word-break:break-all}
+.hverdict{font-size:clamp(22px,3vw,30px);font-weight:750;letter-spacing:-.02em;margin:6px 0 2px}
+.hverdict .vword{color:var(--vc)}
+.hverdict .vneeds{color:var(--muted);font-weight:600;font-size:.62em}
+.hsub{color:var(--muted);font-size:13px;max-width:60ch}
+.cert{display:flex;gap:12px;align-items:center;border:1px solid var(--hairline);
+border-radius:12px;padding:10px 14px;background:var(--elevated);max-width:360px}
+.certlv{font-family:var(--mono);font-weight:800;font-size:17px;min-width:46px;height:46px;
+border-radius:10px;display:inline-flex;align-items:center;justify-content:center;flex:none;
+color:var(--lc);background:color-mix(in srgb,var(--lc) 13%,transparent);
+border:1px solid color-mix(in srgb,var(--lc) 45%,transparent)}
+.lv-0{--lc:var(--faint)}.lv-1{--lc:var(--tool)}.lv-2{--lc:var(--allow)}.lv-3{--lc:var(--escalate)}
+.certname{font-weight:700;font-size:12.5px}
+.certwhy{font-size:11px;color:var(--muted);line-height:1.45;margin-top:1px}
+.facts{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.fact{font-family:var(--mono);font-size:11px;color:var(--muted);border:1px solid var(--hairline);
+background:var(--elevated);border-radius:999px;padding:5px 12px;display:inline-flex;
+align-items:center;gap:7px}
+.fact .d{width:7px;height:7px;border-radius:50%;flex:none}
+.d-ok{background:var(--allow)}.d-warn{background:var(--review)}.d-bad{background:var(--block)}
+.d-dim{background:var(--faint)}
+.hfix{margin-top:16px;border:1px solid var(--hairline);border-radius:12px;padding:13px 15px;
+background:var(--elevated);border-left:3px solid var(--sc)}
+.sev-block{--sc:var(--block)}.sev-review{--sc:var(--review)}.sev-tool{--sc:var(--tool)}
+.sev-ok{--sc:var(--allow)}
+.hfixlab{font-family:var(--mono);font-size:10.5px;font-weight:700;letter-spacing:.1em;
+text-transform:uppercase;color:var(--sc);margin-bottom:3px}
+.hfixtitle{font-weight:700;font-size:14px}
+.hfixwhy{color:var(--muted);font-size:12.5px;margin-top:2px;max-width:75ch}
+.cmd{display:flex;align-items:center;gap:10px;background:var(--panel);
+border:1px solid var(--hairline);border-radius:9px;padding:8px 11px;margin-top:9px}
+.cmd code{font-size:11.5px;white-space:pre;overflow-x:auto;flex:1;display:block;
+color:var(--ink);scrollbar-width:thin}
+.copy{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.06em;
+text-transform:uppercase;color:var(--muted);background:var(--elevated);
+border:1px solid var(--hairline);border-radius:6px;padding:4px 9px;cursor:pointer;flex:none}
+.copy:hover{color:var(--ink);border-color:var(--faint)}
+.linklike{background:none;border:0;color:var(--tool);font:inherit;font-size:12px;
+cursor:pointer;padding:0;margin-top:10px;text-decoration:underline;
+text-underline-offset:3px;display:inline-block}
+
+/* fleet strip */
+.fleetstrip{background:var(--panel);border:1px solid var(--hairline);border-radius:14px;
+box-shadow:var(--shadow);padding:14px 18px;margin-bottom:16px}
+.fleetrow{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:7px 0;
+border-top:1px solid var(--hairline);font-size:13px}
+.fleetrow:first-of-type{border-top:0}
+.fleetrow .fn{font-weight:700;min-width:130px}
+.fleetcounts{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-bottom:6px}
+.vbadge{font-family:var(--mono);font-size:10.5px;font-weight:700;padding:3px 10px;
+border-radius:999px;color:var(--vc);background:color-mix(in srgb,var(--vc) 13%,transparent);
+white-space:nowrap}
+.lvchip{font-family:var(--mono);font-size:10.5px;font-weight:800;padding:3px 9px;
+border-radius:6px;color:var(--lc);background:color-mix(in srgb,var(--lc) 13%,transparent);
+border:1px solid color-mix(in srgb,var(--lc) 40%,transparent);white-space:nowrap}
+.ftop{font-family:var(--mono);font-size:11px;color:var(--muted);flex:1;min-width:150px;
+overflow-wrap:anywhere}
+
+/* filter chips (advanced, fleet scope) */
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+.fchip{font-family:var(--mono);font-size:11.5px;font-weight:700;padding:6px 12px;
 border-radius:999px;border:1px solid var(--hairline);background:var(--panel);color:var(--muted);
 display:inline-flex;gap:8px;align-items:center;cursor:pointer;transition:border-color .15s,color .15s}
 .fchip .d{width:8px;height:8px;border-radius:50%;flex:none}
@@ -77,113 +190,331 @@ display:inline-flex;gap:8px;align-items:center;cursor:pointer;transition:border-
 .fchip:hover{border-color:var(--faint)}
 .fchip[aria-pressed=true]{border-color:var(--ember);color:var(--ink);
 box-shadow:inset 0 0 0 1px var(--ember)}
+.fleet-only{display:none}
+body.fleet .fleet-only{display:flex}
+.fhide{display:none!important}
 
-/* project cards */
-.card{background:var(--panel);border:1px solid var(--hairline);border-left:3px solid var(--vc);
-border-radius:14px;box-shadow:var(--shadow);margin-bottom:14px;overflow:hidden}
-.v-bad{--vc:var(--block)}.v-warn{--vc:var(--review)}.v-ok{--vc:var(--allow)}
-.chead{display:flex;align-items:center;gap:14px;flex-wrap:wrap;width:100%;
-padding:15px 18px;background:none;border:0;color:inherit;font:inherit;text-align:left;
+/* advanced: project block + signal cards */
+.pblock{margin-bottom:22px}
+.pbhead{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+.pbname{font-size:16px;font-weight:750}
+.pbpath{font-family:var(--mono);font-size:10px;color:var(--faint);word-break:break-all}
+.sig{background:var(--panel);border:1px solid var(--hairline);border-radius:12px;
+box-shadow:var(--shadow);margin-bottom:8px;overflow:hidden}
+.shead{display:flex;align-items:center;gap:14px;flex-wrap:wrap;width:100%;
+padding:12px 16px;background:none;border:0;color:inherit;font:inherit;text-align:left;
 cursor:pointer}
-.chead:hover{background:var(--elevated)}
-.cid{min-width:150px}
-.cname{font-size:16.5px;font-weight:700;display:block}
-.cpath{font-family:var(--mono);font-size:10.5px;color:var(--faint);display:block;margin-top:1px;
-word-break:break-all}
-.hsigs{display:flex;gap:6px 16px;flex-wrap:wrap;flex:1;min-width:220px}
-.hsig{font-family:var(--mono);font-size:11.5px;color:var(--muted);white-space:nowrap}
-.hsig b{font-weight:700}
+.shead:hover{background:var(--elevated)}
+.stitle{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.1em;
+text-transform:uppercase;color:var(--muted);min-width:120px}
+.ssum{font-family:var(--mono);font-size:11.5px;color:var(--muted);flex:1;min-width:200px;
+display:flex;gap:6px 14px;flex-wrap:wrap}
+.chev{color:var(--faint);flex:none;transition:transform .18s ease}
+.shead[aria-expanded=true] .chev{transform:rotate(180deg)}
+.sbody{padding:6px 16px 14px;border-top:1px solid var(--hairline)}
+.kv{display:flex;justify-content:space-between;gap:12px;padding:3px 0;font-size:12.5px}
+.kk{font-family:var(--mono);font-size:11px;color:var(--faint);flex:none}
+.kx{text-align:right;min-width:0;overflow-wrap:anywhere}
+.kx.mono{font-family:var(--mono);font-size:11.5px}
+.note{margin-top:8px;font-size:11px;color:var(--faint);line-height:1.5}
+.commitmsg{margin-top:8px;font-family:var(--mono);font-size:11.5px;color:var(--muted);
+background:var(--elevated);border:1px solid var(--hairline);border-radius:7px;padding:6px 9px;
+overflow-wrap:anywhere}
 .mwrap{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);
 font-size:11px;color:var(--muted)}
 .meter{display:inline-flex;gap:3px}
 .meter i{width:13px;height:6px;border-radius:2px;background:var(--hairline)}
 .meter i.on{background:var(--gc)}
 .g-ok{--gc:var(--allow)}.g-warn{--gc:var(--review)}.g-bad{--gc:var(--block)}
-.badge{font-family:var(--mono);font-size:11px;font-weight:700;padding:4px 11px;
-border-radius:999px;color:var(--vc);background:color-mix(in srgb,var(--vc) 13%,transparent);
-white-space:nowrap}
-.chev{color:var(--faint);flex:none;transition:transform .18s ease}
-.chead[aria-expanded=true] .chev{transform:rotate(180deg)}
-
-/* expanded detail */
-.cbody{padding:4px 18px 16px;border-top:1px solid var(--hairline)}
-.cbody[hidden]{display:none}
-.secgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;
-margin-top:12px}
-.sec{background:var(--elevated);border:1px solid var(--hairline);border-radius:10px;
-padding:11px 13px}
-.sk{font-family:var(--mono);font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;
-color:var(--faint);margin-bottom:7px}
-.kv{display:flex;justify-content:space-between;gap:12px;padding:2.5px 0;font-size:12.5px}
-.kk{font-family:var(--mono);font-size:11px;color:var(--faint);flex:none}
-.kx{text-align:right;min-width:0;overflow-wrap:anywhere}
-.kx.mono,.hsig{font-family:var(--mono)}
-.kx.mono{font-size:11.5px}
-.note{margin-top:7px;font-size:11px;color:var(--faint);line-height:1.45}
-.commitmsg{margin-top:7px;font-family:var(--mono);font-size:11.5px;color:var(--muted);
-background:var(--panel);border:1px solid var(--hairline);border-radius:7px;padding:6px 9px;
-overflow-wrap:anywhere}
-.gline{display:flex;justify-content:space-between;gap:12px;padding:2.5px 0;
+.gline{display:flex;justify-content:space-between;gap:12px;padding:3px 0;
 font-size:12px;font-family:var(--mono)}
-.gmark{font-weight:700}
-.planned{margin-top:12px;border-top:1px dashed var(--hairline);padding-top:10px;
-font-size:11.5px;color:var(--faint);font-family:var(--mono);line-height:1.55}
+.gmark{font-weight:700;flex:none}
+.claim{display:flex;gap:10px;padding:7px 0;border-top:1px dashed var(--hairline);
+font-size:12.5px}
+.claim:first-of-type{border-top:0}
+.claim .cbody2{min-width:0}
+.claim b{font-family:var(--mono);font-size:11.5px}
+.claimev{color:var(--muted);font-size:11.5px;overflow-wrap:anywhere}
+.repro{font-family:var(--mono);font-size:10.5px;color:var(--faint);margin-top:2px;
+overflow-wrap:anywhere}
+.planned{margin-top:6px;border-top:1px dashed var(--hairline);padding-top:8px;
+font-size:11px;color:var(--faint);font-family:var(--mono);line-height:1.55}
 .planned b{color:var(--muted)}
-.ok{color:var(--allow)}.warn{color:var(--review)}.bad{color:var(--block)}.dim{color:var(--faint)}
+
+/* configure */
+.cfgnote{border:1px solid var(--hairline);border-left:3px solid var(--tool);
+border-radius:12px;background:var(--panel);padding:12px 16px;font-size:12.5px;
+color:var(--muted);margin-bottom:16px;max-width:100%}
+.cfgblock{margin-bottom:24px}
+.cfggrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;
+align-items:start}
+.cfgcard{background:var(--panel);border:1px solid var(--hairline);border-radius:14px;
+box-shadow:var(--shadow);padding:16px 18px}
+.cfgh{font-family:var(--mono);font-size:10.5px;font-weight:700;letter-spacing:.12em;
+text-transform:uppercase;color:var(--faint);margin-bottom:10px}
+.fix{border-top:1px dashed var(--hairline);padding:11px 0}
+.fix:first-of-type{border-top:0;padding-top:2px}
+.fixtitle{font-weight:700;font-size:13px;display:flex;align-items:center;gap:8px}
+.sevdot{width:8px;height:8px;border-radius:50%;background:var(--sc);flex:none}
+.fixwhy{color:var(--muted);font-size:12px;margin-top:2px;max-width:75ch}
+.allgood{font-size:13px;color:var(--allow);font-weight:600}
+
+/* guard tester */
+.tester{background:var(--panel);border:1px solid var(--hairline);border-radius:14px;
+box-shadow:var(--shadow);padding:18px;margin-top:4px}
+.gin{width:100%;font-family:var(--mono);font-size:13px;padding:10px 12px;border-radius:9px;
+border:1px solid var(--hairline);background:var(--elevated);color:var(--ink)}
+.gin:focus{outline:2px solid var(--ember);outline-offset:1px}
+.gout{margin-top:10px;font-family:var(--mono);font-size:13px;font-weight:700;min-height:20px}
+.gout .why{font-weight:400;font-size:11.5px;color:var(--muted)}
+.gexs{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.gex{font-family:var(--mono);font-size:10.5px;color:var(--muted);background:var(--elevated);
+border:1px solid var(--hairline);border-radius:6px;padding:4px 9px;cursor:pointer}
+.gex:hover{color:var(--ink);border-color:var(--faint)}
 
 .emptymsg{font-family:var(--mono);font-size:12.5px;color:var(--faint);border:1px dashed
 var(--hairline);border-radius:12px;padding:22px;text-align:center}
-.foot{margin-top:34px;padding-top:16px;border-top:1px solid var(--hairline);
-color:var(--faint);font-size:12px;font-family:var(--mono);line-height:1.6}
+.foot{margin-top:36px;padding-top:16px;border-top:1px solid var(--hairline);
+color:var(--faint);font-size:11.5px;font-family:var(--mono);line-height:1.6}
 
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;
 animation:none!important}}
-@media(max-width:640px){.hsigs{order:5;width:100%}.chead{gap:10px}
-.hsig{white-space:normal}}
+@media(max-width:640px){.controls{position:static}.ssum{order:5;width:100%}
+.herotop{flex-direction:column}}
 """
 
-# Vanilla, dependency-free, no external requests. Buttons give keyboard access
-# for free; state lives in aria-pressed / aria-expanded so AT stays in sync.
-_JS = """
+# ---------------------------------------------------------------------------
+# Inline JS. Vanilla, dependency-free, zero external requests. Runs only when
+# JS is available (the .js gate on <html> is set by a tiny head script); without
+# JS the page renders fully static: tabs stacked, every panel and card open.
+# The guard tester is a faithful client-side port of the built-in deny rules in
+# hooks/guard.py (same segmentation, same regexes) — see _JS comments.
+# ---------------------------------------------------------------------------
+_HEAD_JS = 'document.documentElement.className += " js";'
+
+_JS = r"""
 (function () {
   "use strict";
-  var chips = Array.prototype.slice.call(document.querySelectorAll(".fchip"));
-  var cards = Array.prototype.slice.call(document.querySelectorAll(".card"));
-  var empty = document.getElementById("noneMsg");
-  function applyFilter(val) {
-    var shown = 0;
-    cards.forEach(function (c) {
-      var show = val === "all" || c.getAttribute("data-verdict") === val;
-      c.hidden = !show;
-      if (show) { shown += 1; }
-    });
-    chips.forEach(function (ch) {
-      ch.setAttribute("aria-pressed", ch.getAttribute("data-filter") === val ? "true" : "false");
-    });
-    if (empty) { empty.hidden = shown !== 0; }
+  function $$(sel, root) {
+    return Array.prototype.slice.call((root || document).querySelectorAll(sel));
   }
-  chips.forEach(function (ch) {
-    ch.addEventListener("click", function () {
-      applyFilter(ch.getAttribute("data-filter"));
+
+  /* ---------------- tabs (WAI-ARIA pattern: roving tabindex + arrows) ------ */
+  var tabs = $$("[role=tab]");
+  var panels = tabs.map(function (t) {
+    return document.getElementById(t.getAttribute("aria-controls"));
+  });
+  function selectTab(idx, focus) {
+    tabs.forEach(function (t, i) {
+      var on = i === idx;
+      t.setAttribute("aria-selected", on ? "true" : "false");
+      t.tabIndex = on ? 0 : -1;
+      if (panels[i]) { panels[i].hidden = !on; }
+    });
+    if (focus) { tabs[idx].focus(); }
+  }
+  tabs.forEach(function (t, i) {
+    t.addEventListener("click", function () { selectTab(i, false); });
+    t.addEventListener("keydown", function (e) {
+      var n = null;
+      if (e.key === "ArrowRight" || e.key === "ArrowDown") { n = (i + 1) % tabs.length; }
+      else if (e.key === "ArrowLeft" || e.key === "ArrowUp") { n = (i - 1 + tabs.length) % tabs.length; }
+      else if (e.key === "Home") { n = 0; }
+      else if (e.key === "End") { n = tabs.length - 1; }
+      if (n !== null) { e.preventDefault(); selectTab(n, true); }
     });
   });
-  Array.prototype.slice.call(document.querySelectorAll(".chead")).forEach(function (btn) {
+  $$("[data-goto]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var want = "tab-" + b.getAttribute("data-goto");
+      for (var i = 0; i < tabs.length; i += 1) {
+        if (tabs[i].id === want) { selectTab(i, true); return; }
+      }
+    });
+  });
+
+  /* ---------------- project scope selector -------------------------------- */
+  var scopeSel = document.getElementById("scope");
+  var scoped = $$(".scoped");
+  var curFilter = "all";
+  function applyScope() {
+    var val = scopeSel ? scopeSel.value : "fleet";
+    var fleet = val === "fleet";
+    document.body.classList.toggle("fleet", fleet);
+    scoped.forEach(function (el) {
+      el.hidden = !(fleet || el.getAttribute("data-p") === val);
+    });
+    applyFilter(curFilter);
+  }
+  if (scopeSel) { scopeSel.addEventListener("change", applyScope); }
+
+  /* ---------------- verdict filter chips (fleet view, Advanced tab) -------- */
+  var chips = $$(".fchip");
+  function applyFilter(val) {
+    curFilter = val;
+    var fleet = document.body.classList.contains("fleet");
+    var visible = 0;
+    $$(".pblock").forEach(function (b) {
+      var match = val === "all" || b.getAttribute("data-verdict") === val;
+      var hide = fleet && !match;
+      b.classList.toggle("fhide", hide);
+      if (!b.hidden && !hide) { visible += 1; }
+    });
+    chips.forEach(function (c) {
+      c.setAttribute("aria-pressed", c.getAttribute("data-filter") === val ? "true" : "false");
+    });
+    var empty = document.getElementById("advEmpty");
+    if (empty) { empty.hidden = visible !== 0; }
+  }
+  chips.forEach(function (c) {
+    c.addEventListener("click", function () { applyFilter(c.getAttribute("data-filter")); });
+  });
+
+  /* ---------------- expandable signal cards (one open at a time) ----------- */
+  var heads = $$(".shead");
+  function setOpen(btn, open) {
     var body = document.getElementById(btn.getAttribute("aria-controls"));
-    if (!body) { return; }
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+    if (body) { body.hidden = !open; }
+  }
+  heads.forEach(function (btn) {
+    setOpen(btn, false); // server renders open for no-JS; collapse for the app view
     btn.addEventListener("click", function () {
       var open = btn.getAttribute("aria-expanded") === "true";
-      btn.setAttribute("aria-expanded", open ? "false" : "true");
-      body.hidden = open;
+      if (!open) {
+        heads.forEach(function (o) { if (o !== btn) { setOpen(o, false); } });
+      }
+      setOpen(btn, !open);
     });
   });
-  applyFilter("all");
+
+  /* ---------------- copy-to-clipboard for fix commands --------------------- */
+  function legacyCopy(txt) {
+    var ta = document.createElement("textarea");
+    ta.value = txt;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    var ok = false;
+    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    return ok;
+  }
+  $$(".copy").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var code = btn.parentNode.querySelector("code");
+      var txt = code ? code.textContent : "";
+      function done(ok) {
+        btn.textContent = ok ? "copied" : "copy failed";
+        setTimeout(function () { btn.textContent = "copy"; }, 1400);
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(txt).then(
+          function () { done(true); },
+          function () { done(legacyCopy(txt)); }
+        );
+      } else {
+        done(legacyCopy(txt));
+      }
+    });
+  });
+
+  /* ---------------- guard tester ------------------------------------------
+     Client-side port of the BUILT-IN deny rules in hooks/guard.py (is_denied):
+     same shell-separator segmentation, same regexes. Project-specific
+     deny-extra.txt patterns are NOT evaluated here — a static page cannot read
+     files. Like the real guard, this is a best-effort footgun-catcher, not a
+     security boundary. */
+  var SEP = /&&|\|\||[;\n|]/;
+  var STATIC_DENY = [
+    [/\bmkfs\b/, "mkfs (filesystem format)"],
+    [/\bdd\s+if=/, "dd if= (raw disk write)"],
+    [/\bdrop\s+(table|database)\b/, "DROP TABLE / DROP DATABASE"],
+    [/\btruncate\s+table\b/, "TRUNCATE TABLE"],
+    [/:\s*\(\s*\)\s*\{[\s\S]*\}\s*;\s*:/, "fork bomb"],
+    [/>\s*\/dev\/sd[a-z]\d*/, "write to raw block device"],
+    [/\bfind\s+\/\s[\s\S]*-delete\b/, "find / ... -delete"]
+  ];
+  function segDenied(seg) {
+    if (/\brm\b/.test(seg)) {
+      var recursive = /--recursive|-[a-z]*r/.test(seg);
+      var force = /--force|-[a-z]*f/.test(seg);
+      var target = /(^|[\s=])(\/|~|\/\*)(\s|$)/.test(seg) ||
+        seg.indexOf("--no-preserve-root") !== -1;
+      if (recursive && force && target) { return "rm: recursive+force on / or ~"; }
+    }
+    if (/\bgit\s+push\b/.test(seg)) {
+      if (/--force|--force-with-lease|(^|\s)-[a-z]*f(\s|$)/.test(seg)) {
+        return "git push with a force flag";
+      }
+      if (/\s\+\S/.test(seg)) { return "git push +refspec (forced update)"; }
+    }
+    if (/\bchmod\b/.test(seg) && seg.indexOf("777") !== -1) {
+      if (/--recursive|-[a-z]*r/.test(seg) && /(^|[\s=])\/(\s|$)/.test(seg)) {
+        return "chmod -R 777 on /";
+      }
+    }
+    return null;
+  }
+  function whyDenied(command) {
+    var c = command.toLowerCase();
+    var segs = c.split(SEP);
+    for (var i = 0; i < segs.length; i += 1) {
+      var r = segDenied(segs[i]);
+      if (r) { return r; }
+    }
+    for (var j = 0; j < STATIC_DENY.length; j += 1) {
+      if (STATIC_DENY[j][0].test(c)) { return STATIC_DENY[j][1]; }
+    }
+    return null;
+  }
+  var gin = document.getElementById("gcmd");
+  var gout = document.getElementById("gout");
+  function judge() {
+    if (!gin || !gout) { return; }
+    var v = gin.value;
+    if (!v.replace(/\s/g, "")) {
+      gout.className = "gout";
+      gout.innerHTML = '<span class="dim">type a command to test it against the deny rules</span>';
+      return;
+    }
+    var why = whyDenied(v);
+    if (why) {
+      gout.className = "gout blocked";
+      gout.innerHTML = '<span class="bad">&#10007; BLOCKED</span> <span class="why"></span>';
+      gout.querySelector(".why").textContent = "matched rule: " + why;
+    } else {
+      gout.className = "gout allowed";
+      gout.innerHTML = '<span class="ok">&#10003; allowed</span> <span class="why">' +
+        "no built-in deny rule matched (project deny-extra.txt rules not evaluated here)</span>";
+    }
+  }
+  if (gin) {
+    gin.addEventListener("input", judge);
+    judge();
+  }
+  $$(".gex").forEach(function (b) {
+    b.addEventListener("click", function () {
+      if (gin) {
+        gin.value = b.textContent;
+        judge();
+        gin.focus();
+      }
+    });
+  });
+
+  /* ---------------- init ---------------------------------------------------- */
+  if (tabs.length) { selectTab(0, false); }
+  applyScope();
 })();
 """
 
 _GATE_LABELS: dict[str, str] = {
     "pre_commit_config": "pre-commit config",
     "pre_commit_installed": "pre-commit installed",
-    "pre_push_gate": "pre-push gate",
+    "pre_push_gate": "pre-push secret gate",
     "ci_workflow": "CI workflow",
     "gitleaks_allowlist": "gitleaks allowlist",
     "plan_mode_first": "plan-mode first",
@@ -191,6 +522,18 @@ _GATE_LABELS: dict[str, str] = {
 
 _ORDER = {"needs-attention": 0, "under-protected": 1, "healthy": 2}
 _VCLASS = {"needs-attention": "v-bad", "under-protected": "v-warn", "healthy": "v-ok"}
+_VWORD = {
+    "needs-attention": "Needs attention",
+    "under-protected": "Under-protected",
+    "healthy": "Protected",
+}
+# certificate level -> (big glyph, human name, css class)
+_LEVEL_META = {
+    "L1": ("L1", "Forge Verified — Gated", "lv-1"),
+    "L2": ("L2", "Forge Verified — Verified", "lv-2"),
+    "L3": ("L3", "Forge Verified — Provenanced", "lv-3"),
+    "none": ("—", "Not certified", "lv-0"),
+}
 
 
 def _esc(x: Any) -> str:
@@ -209,13 +552,118 @@ def _verdict(p: dict[str, Any]) -> str:
     return "healthy"
 
 
+# ---------------------------------------------------------------------------
+# Gap -> remedy. Every flagged gap carries its exact fix command; the Dashboard
+# shows the top one, Configure shows them all. Commands are static strings we
+# author (no project data interpolated), still escaped at render time.
+# $CLAUDE_PLUGIN_ROOT is the Forge plugin checkout (set in Claude Code hooks;
+# substitute the plugin path when running by hand).
+# ---------------------------------------------------------------------------
+def _fixes(p: dict[str, Any]) -> list[dict[str, str]]:
+    enf, sec, forge, g = p["enforcement"], p["secrets"], p["forge"], p["git"]
+    deps = p["deps"]
+    fixes: list[dict[str, str]] = []
+    if sec.get("findings"):
+        n = int(sec["findings"])
+        fixes.append({
+            "sev": "block",
+            "title": f"{n} possible secret(s) in committed history",
+            "why": (f"gitleaks flagged {n} finding(s) in the scanned scope "
+                    f"({sec.get('scope', '?')}). Inspect them (values stay redacted), "
+                    "rotate anything real, then allowlist confirmed false positives "
+                    "in .gitleaks.toml."),
+            "cmd": "gitleaks git --redact -v",
+        })
+    if not forge.get("installed"):
+        fixes.append({
+            "sev": "review",
+            "title": "Forge is not initialised in this project",
+            "why": ("Run /forge-init in Claude Code (idempotent — stamps only what is "
+                    "missing): CLAUDE.md, pre-commit config, gitleaks allowlist, CI "
+                    "workflow, pre-push gate, plan-mode-first, and .forge/memory.db."),
+            "cmd": "/forge-init",
+        })
+    if not enf.get("pre_push_gate"):
+        fixes.append({
+            "sev": "review",
+            "title": "Pre-push secret gate is not installed",
+            "why": ("Nothing scans commits at push time — the authoritative moment a "
+                    "secret would leave this machine."),
+            "cmd": ('cp "$CLAUDE_PLUGIN_ROOT/templates/pre-push" .git/hooks/pre-push '
+                    "&& chmod +x .git/hooks/pre-push"),
+        })
+    if enf.get("pre_commit_config") and not enf.get("pre_commit_installed"):
+        fixes.append({
+            "sev": "review",
+            "title": "pre-commit config exists but the hook is not installed",
+            "why": (".pre-commit-config.yaml is present, yet no .git/hooks/pre-commit "
+                    "— the checks never actually run on commit."),
+            "cmd": "pre-commit install",
+        })
+    if not enf.get("pre_commit_config"):
+        fixes.append({
+            "sev": "review",
+            "title": "No pre-commit config",
+            "why": "No lint/secret checks run at commit time.",
+            "cmd": ('cp "$CLAUDE_PLUGIN_ROOT/templates/pre-commit-config.yaml" '
+                    ".pre-commit-config.yaml && pre-commit install"),
+        })
+    if not enf.get("ci_workflow"):
+        fixes.append({
+            "sev": "review",
+            "title": "No CI workflow",
+            "why": "Nothing verifies pushed commits server-side.",
+            "cmd": ("mkdir -p .github/workflows && "
+                    'cp "$CLAUDE_PLUGIN_ROOT/templates/ci-pipeline.yml" '
+                    ".github/workflows/forge-ci.yml"),
+        })
+    if not enf.get("gitleaks_allowlist"):
+        fixes.append({
+            "sev": "tool",
+            "title": "No gitleaks allowlist",
+            "why": ("Without .gitleaks.toml the secret scans are noisy; the Forge "
+                    "template excludes known false-positive paths."),
+            "cmd": 'cp "$CLAUDE_PLUGIN_ROOT/templates/.gitleaks.toml" .gitleaks.toml',
+        })
+    if forge.get("installed") and not enf.get("plan_mode_first"):
+        fixes.append({
+            "sev": "tool",
+            "title": "Sessions do not start in plan mode",
+            "why": ("permissions.defaultMode != \"plan\" in .claude/settings.json. "
+                    "/forge-init merges it in idempotently (never clobbers other "
+                    "settings)."),
+            "cmd": "/forge-init",
+        })
+    if not g.get("has_remote"):
+        fixes.append({
+            "sev": "tool",
+            "title": "No git remote",
+            "why": ("Work only exists on this machine. Forge standard: a PRIVATE "
+                    "repo before real work."),
+            "cmd": "gh repo create --private --source . --push",
+        })
+    kv = deps.get("known_vulns")
+    if isinstance(kv, int) and kv > 0:
+        fixes.append({
+            "sev": "block",
+            "title": f"{int(kv)} known dependency CVE(s)",
+            "why": "pip-audit found known-vulnerable pinned dependencies.",
+            "cmd": "pip-audit",
+        })
+    return fixes
+
+
+# ---------------------------------------------------------------------------
+# Small HTML helpers (everything dynamic goes through _esc).
+# ---------------------------------------------------------------------------
 def _kv(key: str, value_html: str, mono: bool = False) -> str:
     cls = "kx mono" if mono else "kx"
-    return f'<div class="kv"><span class="kk">{_esc(key)}</span><span class="{cls}">{value_html}</span></div>'
+    return (f'<div class="kv"><span class="kk">{_esc(key)}</span>'
+            f'<span class="{cls}">{value_html}</span></div>')
 
 
-def _sec(title: str, body: str) -> str:
-    return f'<div class="sec"><div class="sk">{_esc(title)}</div>{body}</div>'
+def _yn(v: bool) -> str:
+    return '<span class="ok">yes</span>' if v else '<span class="warn">MISSING</span>'
 
 
 def _ci_class(ci: str) -> str:
@@ -226,14 +674,9 @@ def _ci_class(ci: str) -> str:
     return "dim"
 
 
-def _secrets_headline(sec: dict[str, Any]) -> str:
-    if sec.get("findings"):
-        return (f'<span class="bad">secrets {int(sec["findings"])} finding(s)'
-                f" · {_esc(sec.get('scope', '?'))}</span>")
-    if sec.get("clean"):
-        gate = "" if sec.get("pre_push_gate") else ' · <span class="warn">no pre-push gate</span>'
-        return f'<span class="ok">secrets clean</span> · {_esc(sec.get("scope", "?"))}{gate}'
-    return f'<span class="dim">secrets: {_esc(sec.get("status", "?"))}</span>'
+def _cmdblock(cmd: str) -> str:
+    return (f'<div class="cmd"><code>{_esc(cmd)}</code>'
+            '<button type="button" class="copy js-only">copy</button></div>')
 
 
 def _gates_meter(enf: dict[str, Any]) -> str:
@@ -244,61 +687,214 @@ def _gates_meter(enf: dict[str, Any]) -> str:
     label = f"{armed} of {total} enforcement gates armed"
     if missing:
         label += " — missing: " + ", ".join(missing)
-    segs = "".join(
-        f'<i class="{"on" if enf.get(k) else ""}"></i>' for k in _GATE_LABELS
-    )
+    segs = "".join(f'<i class="{"on" if enf.get(k) else ""}"></i>' for k in _GATE_LABELS)
     return (f'<span class="mwrap {gcls}" role="img" aria-label="{_esc(label)}" '
             f'title="{_esc(label)}"><span class="meter" aria-hidden="true">{segs}</span>'
             f"{armed}/{total}</span>")
 
 
-def _sec_git(g: dict[str, Any], collected_at: str) -> str:
+def _level_meta(cert: dict[str, Any] | None) -> tuple[str, str, str, str]:
+    """(glyph, name, css_class, why-line) — level whitelisted through _LEVEL_META,
+    never interpolated raw into a class attribute."""
+    if cert is None:
+        return ("?", "Certificate not computed",
+                "lv-0", "Run status/forge_dashboard.py to compute the Forge Verified "
+                "certificate for this project (plain forge_status JSON has none).")
+    glyph, name, cls = _LEVEL_META.get(str(cert.get("level")), _LEVEL_META["none"])
+    level = str(cert.get("level"))
+    claims = [c for c in cert.get("claims", []) if isinstance(c, dict)]
+    failing = [str(c.get("name", "?")) for c in claims if not c.get("passed")]
+    runs = int(cert.get("governed_runs", 0))
+    if level == "L3":
+        why = f"Every claim green and {runs} Forge-governed run(s) recorded."
+    elif level == "L2":
+        why = (f"L3 (provenanced) needs Forge-governed run history — this project has "
+               f"{runs} governed run(s).")
+    elif level == "L1":
+        why = "Enforcement armed; failing for L2: " + (", ".join(failing) or "?") + "."
+    else:
+        why = ("Not L1: enforcement not fully armed (needs pre-push gate + CI + "
+               "pre-commit config).")
+    return glyph, name, cls, why
+
+
+# ---------------------------------------------------------------------------
+# Tab 1 — Dashboard (plain language)
+# ---------------------------------------------------------------------------
+def _fact(cls: str, text: str) -> str:
+    return (f'<span class="fact"><span class="d {cls}" aria-hidden="true"></span>'
+            f"{_esc(text)}</span>")
+
+
+def _plain_facts(p: dict[str, Any]) -> str:
+    g, gh, sec, enf, forge = p["git"], p["github"], p["secrets"], p["enforcement"], p["forge"]
+    facts: list[str] = []
+    if sec.get("findings"):
+        facts.append(_fact("d-bad", f"possible secret found ({sec.get('scope', '?')}) — check now"))
+    elif sec.get("clean"):
+        facts.append(_fact("d-ok", f"no secrets found ({sec.get('scope', '?')})"))
+    else:
+        facts.append(_fact("d-dim", f"secret scan: {sec.get('status', '?')}"))
+    armed = sum(bool(enf[k]) for k in enf)
+    cls = "d-ok" if armed >= 5 else ("d-warn" if armed >= 3 else "d-bad")
+    facts.append(_fact(cls, f"{armed} of {len(enf)} protections on"))
+    if gh.get("connected"):
+        ci = str(gh.get("latest_ci", "unknown"))
+        cic = {"ok": "d-ok", "bad": "d-bad", "dim": "d-dim"}[_ci_class(ci)]
+        facts.append(_fact(cic, f"CI: {ci} (current commit)"))
+    else:
+        facts.append(_fact("d-dim", "GitHub: not connected"))
+    unc = int(g["uncommitted_files"])
+    facts.append(_fact("d-warn" if unc else "d-ok",
+                       f"{unc} file(s) not committed yet" if unc else "all work committed"))
+    runs = int(forge["governed_runs"])
+    facts.append(_fact("d-ok" if runs else "d-dim", f"{runs} Forge-governed run(s)"))
+    return f'<div class="facts">{"".join(facts)}</div>'
+
+
+def _hero(p: dict[str, Any], i: int) -> str:
+    verdict = _verdict(p)
+    fixes = _fixes(p)
+    word = _VWORD[verdict]
+    n = len(fixes)
+    needs = ""
+    if n:
+        needs = (f' <span class="vneeds">&middot; {n} thing{"s" if n != 1 else ""} '
+                 f'need{"" if n != 1 else "s"} you</span>')
+    subs = {
+        "healthy": "Push-time and commit-time protections are armed on this project.",
+        "under-protected": "Key protections are off — this project is easier to hurt than it should be.",
+        "needs-attention": "The secret scan flagged committed content. Deal with this before anything else.",
+    }
+    glyph, name, lvcls, why = _level_meta(p.get("certificate"))
+    cert_html = (
+        f'<div class="cert {lvcls}"><span class="certlv" aria-hidden="true">{_esc(glyph)}</span>'
+        f'<span><span class="certname">{_esc(name)}</span>'
+        f'<div class="certwhy">{_esc(why)}</div></span></div>'
+    )
+    if fixes:
+        top = fixes[0]
+        more = ""
+        if n > 1:
+            more = (f'<button type="button" class="linklike js-only" data-goto="cfg">'
+                    f"{n - 1} more fix{'es' if n - 1 != 1 else ''} in Configure &rarr;</button>")
+        sev = {"block": "sev-block", "review": "sev-review", "tool": "sev-tool"}[top["sev"]]
+        fix_html = (
+            f'<div class="hfix {sev}"><div class="hfixlab">do this first</div>'
+            f'<div class="hfixtitle">{_esc(top["title"])}</div>'
+            f'<div class="hfixwhy">{_esc(top["why"])}</div>'
+            f"{_cmdblock(top['cmd'])}{more}</div>"
+        )
+    else:
+        fix_html = ('<div class="hfix sev-ok"><div class="hfixlab">nothing to do</div>'
+                    '<div class="hfixtitle">Nothing needs you right now.</div>'
+                    '<div class="hfixwhy">Every setting this page inspects is at the '
+                    "recommended state.</div></div>")
+    return (
+        f'<section class="hero {_VCLASS[verdict]} scoped" data-p="{int(i)}">'
+        f'<div class="herotop"><div>'
+        f'<div class="hname">{_esc(p["project"])}</div>'
+        f'<div class="hpath">{_esc(p["path"])}</div>'
+        f'<div class="hverdict"><span class="vword">{_esc(word)}</span>{needs}</div>'
+        f'<p class="hsub">{_esc(subs[verdict])}</p></div>'
+        f"{cert_html}</div>"
+        f"{_plain_facts(p)}{fix_html}</section>"
+    )
+
+
+def _fleet_strip(projects: list[dict[str, Any]]) -> str:
+    counts = {v: 0 for v in _ORDER}
+    rows: list[str] = []
+    for p in projects:
+        v = _verdict(p)
+        counts[v] += 1
+        fixes = _fixes(p)
+        glyph, _name, lvcls, _why = _level_meta(p.get("certificate"))
+        top = _esc(fixes[0]["title"]) if fixes else '<span class="ok">nothing needs you</span>'
+        rows.append(
+            f'<div class="fleetrow {_VCLASS[v]}"><span class="fn">{_esc(p["project"])}</span>'
+            f'<span class="vbadge">{_esc(_VWORD[v])}</span>'
+            f'<span class="lvchip {lvcls}">{_esc(glyph)}</span>'
+            f'<span class="ftop">{top}</span></div>'
+        )
+    summary = (f"{int(counts['healthy'])} protected &middot; "
+               f"{int(counts['under-protected'])} under-protected &middot; "
+               f"{int(counts['needs-attention'])} need attention")
+    return (f'<section class="fleetstrip scoped" data-p="fleet" aria-label="fleet overview">'
+            f'<div class="fleetcounts">fleet &middot; {summary}</div>{"".join(rows)}</section>')
+
+
+# ---------------------------------------------------------------------------
+# Tab 2 — Advanced (every real signal, expandable cards)
+# ---------------------------------------------------------------------------
+def _sigcard(pid: int, key: str, title: str, summary: str, body: str) -> str:
+    hid, did = f"h-{int(pid)}-{key}", f"d-{int(pid)}-{key}"
+    return (
+        f'<div class="sig"><button type="button" class="shead" id="{hid}" '
+        f'aria-expanded="true" aria-controls="{did}">'
+        f'<span class="stitle">{_esc(title)}</span>'
+        f'<span class="ssum">{summary}</span>'
+        f'<span class="chev" aria-hidden="true">&#9662;</span></button>'
+        f'<div class="sbody" id="{did}" role="region" aria-labelledby="{hid}">{body}</div></div>'
+    )
+
+
+def _card_git(p: dict[str, Any], i: int) -> str:
+    g = p["git"]
     unc = int(g["uncommitted_files"])
     unc_html = (f'<span class="warn">{unc} file(s)</span>' if unc
                 else '<span class="ok">clean tree</span>')
-    remote = (f'<span class="dim">{_esc(g["remote"])}</span>' if g.get("has_remote") and g.get("remote")
+    remote = (f'<span class="dim">{_esc(g["remote"])}</span>'
+              if g.get("has_remote") and g.get("remote")
               else '<span class="warn">no remote</span>')
-    rows = (
+    body = (
         _kv("branch", _esc(g["branch"]), mono=True)
         + _kv("last commit", _esc(g["last_commit_ago"]), mono=True)
         + _kv("uncommitted", unc_html, mono=True)
         + _kv("remote", remote, mono=True)
-        + _kv("collected", _esc(collected_at), mono=True)
+        + _kv("collected", _esc(p.get("collected_at", "")), mono=True)
     )
-    msg = f'<div class="commitmsg">{_esc(g["last_commit"])}</div>' if g.get("last_commit") else ""
-    return _sec("git", rows + msg)
+    if g.get("last_commit"):
+        body += f'<div class="commitmsg">{_esc(g["last_commit"])}</div>'
+    summary = (f"<span><b>{_esc(g['branch'])}</b> &middot; {_esc(g['last_commit_ago'])}</span>"
+               + ("<span class='warn'>%d uncommitted</span>" % unc if unc
+                  else "<span class='ok'>clean tree</span>"))
+    return _sigcard(i, "git", "git", summary, body)
 
 
-def _sec_github(gh: dict[str, Any]) -> str:
+def _card_github(p: dict[str, Any], i: int) -> str:
+    gh = p["github"]
     if not gh.get("connected"):
-        rows = (_kv("connected", '<span class="dim">no</span>')
+        body = (_kv("connected", '<span class="dim">no</span>')
                 + _kv("reason", f'<span class="dim">{_esc(gh.get("reason", "?"))}</span>'))
-        return _sec("github", rows)
+        return _sigcard(i, "github", "github", '<span class="dim">not connected</span>', body)
     ci = str(gh.get("latest_ci", "unknown"))
     prs = int(gh.get("open_prs", 0))
-    rows = (
+    body = (
         _kv("connected", '<span class="ok">yes</span>')
         + _kv("open PRs", f"{prs}", mono=True)
-        + _kv("CI (for HEAD)", f'<span class="{_ci_class(ci)}">{_esc(ci)}</span>', mono=True)
+        + _kv("CI (bound to HEAD)", f'<span class="{_ci_class(ci)}">{_esc(ci)}</span>', mono=True)
         + _kv("bound commit", _esc(gh.get("ci_commit", "?")), mono=True)
     )
     titles = [t for t in gh.get("pr_titles", []) if t]
-    note = ""
     if titles:
-        items = " · ".join(_esc(t) for t in titles)
-        note = f'<div class="note">open: {items}</div>'
-    return _sec("github", rows + note)
+        body += '<div class="note">open: ' + " &middot; ".join(_esc(t) for t in titles) + "</div>"
+    summary = (f'<span>CI <span class="{_ci_class(ci)}">{_esc(ci)}</span> '
+               f'@ {_esc(gh.get("ci_commit", "?"))}</span><span>{prs} open PR(s)</span>')
+    return _sigcard(i, "github", "github", summary, body)
 
 
-def _sec_secrets(sec: dict[str, Any]) -> str:
+def _card_secrets(p: dict[str, Any], i: int) -> str:
+    sec = p["secrets"]
     if "findings" not in sec:
-        rows = (_kv("tool", _esc(sec.get("tool", "gitleaks")), mono=True)
+        body = (_kv("tool", _esc(sec.get("tool", "gitleaks")), mono=True)
                 + _kv("status", f'<span class="dim">{_esc(sec.get("status", "?"))}</span>'))
-        return _sec("secrets", rows)
+        return _sigcard(i, "secrets", "secrets",
+                        f'<span class="dim">{_esc(sec.get("status", "?"))}</span>', body)
     findings = int(sec["findings"])
     f_html = (f'<span class="bad">{findings}</span>' if findings
               else '<span class="ok">0 — clean</span>')
-    rows = (
+    body = (
         _kv("tool", _esc(sec.get("tool", "gitleaks")) + " (--redact)", mono=True)
         + _kv("scope", _esc(sec.get("scope", "?")), mono=True)
         + _kv("findings", f_html, mono=True)
@@ -306,138 +902,296 @@ def _sec_secrets(sec: dict[str, Any]) -> str:
         + _kv("allowlist", _yn(bool(sec.get("allowlist"))), mono=True)
         + _kv("pre-push gate", _yn(bool(sec.get("pre_push_gate"))), mono=True)
     )
-    note = f'<div class="note">{_esc(sec["note"])}</div>' if sec.get("note") else ""
-    return _sec("secrets", rows + note)
+    if sec.get("note"):
+        body += f'<div class="note">{_esc(sec["note"])}</div>'
+    if findings:
+        summary = (f'<span class="bad">{findings} finding(s)</span>'
+                   f"<span>{_esc(sec.get('scope', '?'))}</span>")
+    else:
+        gate = ("" if sec.get("pre_push_gate")
+                else ' <span class="warn">no pre-push gate</span>')
+        summary = (f'<span class="ok">clean</span><span>{_esc(sec.get("scope", "?"))}</span>'
+                   + gate)
+    return _sigcard(i, "secrets", "secrets", summary, body)
 
 
-def _yn(v: bool) -> str:
-    return '<span class="ok">yes</span>' if v else '<span class="warn">MISSING</span>'
-
-
-def _sec_gates(enf: dict[str, Any]) -> str:
+def _card_gates(p: dict[str, Any], i: int) -> str:
+    enf = p["enforcement"]
     lines = []
     for key, label in _GATE_LABELS.items():
         on = bool(enf.get(key))
         mark = ('<span class="gmark ok">&#10003; armed</span>' if on
                 else '<span class="gmark bad">&#10007; missing</span>')
         lines.append(f'<div class="gline"><span>{_esc(label)}</span>{mark}</div>')
-    return _sec("enforcement gates", "".join(lines))
+    body = ("".join(lines)
+            + '<div class="note">fix commands for anything missing are in the '
+              "Configure tab.</div>")
+    return _sigcard(i, "gates", "enforcement gates", _gates_meter(enf), body)
 
 
-def _sec_tests_deps(tests: dict[str, Any], deps: dict[str, Any]) -> str:
+def _card_tests_deps(p: dict[str, Any], i: int) -> str:
+    tests, deps = p["tests"], p["deps"]
     kv = deps.get("known_vulns")
     if isinstance(kv, int):
-        vulns = (f'<span class="bad">{kv} known CVEs</span>' if kv
+        vulns = (f'<span class="bad">{int(kv)} known CVEs</span>' if kv
                  else '<span class="ok">0 known CVEs</span>')
     else:
         vulns = f'<span class="dim">{_esc(kv)}</span>'
-    rows = (
+    body = (
         _kv("test files", f"{int(tests['test_files'])}", mono=True)
         + _kv("coverage", f'<span class="dim">{_esc(tests.get("coverage", "not measured"))}</span>')
         + _kv("manifest", _esc(deps.get("manifest") or "no python manifest"), mono=True)
         + _kv("vulnerabilities", vulns, mono=True)
     )
-    return _sec("tests & deps", rows)
+    summary = f"<span>{int(tests['test_files'])} test file(s)</span><span>{vulns}</span>"
+    return _sigcard(i, "testsdeps", "tests & deps", summary, body)
 
 
-def _sec_forge(forge: dict[str, Any]) -> str:
+def _card_forge(p: dict[str, Any], i: int) -> str:
+    forge = p["forge"]
     runs = int(forge["governed_runs"])
-    rows = (
+    body = (
         _kv("installed", '<span class="ok">yes</span>' if forge.get("installed")
             else '<span class="dim">no</span>', mono=True)
         + _kv("governed runs", f"{runs}", mono=True)
     )
-    note = f'<div class="note">{_esc(forge["note"])}</div>' if forge.get("note") else ""
-    return _sec("forge", rows + note)
-
-
-def _card(p: dict[str, Any], idx: int) -> str:
-    g, gh, sec, enf = p["git"], p["github"], p["secrets"], p["enforcement"]
-    verdict = _verdict(p)
-    vcls = _VCLASS[verdict]
-
-    # collapsed headline: the real signals at a glance
-    unc = int(g["uncommitted_files"])
-    git_h = (f'<span class="hsig"><b>{_esc(g["branch"])}</b> · {_esc(g["last_commit_ago"])} · '
-             + (f'<span class="warn">{unc} uncommitted</span>' if unc
-                else '<span class="ok">clean tree</span>') + "</span>")
-    sec_h = f'<span class="hsig">{_secrets_headline(sec)}</span>'
-    if gh.get("connected"):
-        ci = str(gh.get("latest_ci", "unknown"))
-        gh_h = (f'<span class="hsig">CI <span class="{_ci_class(ci)}">{_esc(ci)}</span> '
-                f'@ {_esc(gh.get("ci_commit", "?"))}</span>')
-    else:
-        gh_h = '<span class="hsig dim">github not connected</span>'
-
-    detail = (
-        _sec_git(g, str(p.get("collected_at", "")))
-        + _sec_github(gh)
-        + _sec_secrets(sec)
-        + _sec_gates(enf)
-        + _sec_tests_deps(p["tests"], p["deps"])
-        + _sec_forge(p["forge"])
+    if forge.get("note"):
+        body += f'<div class="note">{_esc(forge["note"])}</div>'
+    body += (
+        '<div class="planned"><b>Not built yet</b> (honest): live workers &middot; '
+        "pipeline runs &middot; engine tiering. These light up only once Forge governs "
+        f"a real run here — currently {runs} governed run(s).</div>"
     )
-    runs = int(p["forge"]["governed_runs"])
-    planned = (
-        '<div class="planned"><b>Not built yet</b> (honest): live workers · pipeline runs · '
-        "engine tiering · certification. These light up only once Forge governs a real run "
-        f"here — currently {runs} governed run(s).</div>"
+    inst = ('<span class="ok">installed</span>' if forge.get("installed")
+            else '<span class="dim">not installed</span>')
+    summary = f"<span>{inst}</span><span>{runs} governed run(s)</span>"
+    return _sigcard(i, "forge", "forge", summary, body)
+
+
+def _card_certificate(p: dict[str, Any], i: int) -> str:
+    cert = p.get("certificate")
+    glyph, name, lvcls, why = _level_meta(cert)
+    if cert is None:
+        body = f'<div class="note">{_esc(why)}</div>'
+        return _sigcard(i, "cert", "certificate",
+                        '<span class="dim">not computed</span>', body)
+    claims = [c for c in cert.get("claims", []) if isinstance(c, dict)]
+    passed = sum(1 for c in claims if c.get("passed"))
+    rows = []
+    for c in claims:
+        ok = bool(c.get("passed"))
+        mark = ('<span class="gmark ok">&#10003;</span>' if ok
+                else '<span class="gmark bad">&#10007;</span>')
+        rows.append(
+            f'<div class="claim">{mark}<div class="cbody2">'
+            f"<b>{_esc(c.get('name', '?'))}</b> "
+            f'<span class="claimev">— {_esc(c.get("evidence", ""))}</span>'
+            f'<div class="repro">reproduce: <code>{_esc(c.get("reproduce", ""))}</code></div>'
+            f"</div></div>"
+        )
+    body = (
+        _kv("level", f'<span class="lvchip {lvcls}">{_esc(glyph)}</span> {_esc(name)}')
+        + _kv("commit", _esc(cert.get("commit", "?")), mono=True)
+        + _kv("claims passing", f"{passed}/{len(claims)}", mono=True)
+        + _kv("governed runs", f"{int(cert.get('governed_runs', 0))}", mono=True)
+        + "".join(rows)
+        + f'<div class="note">{_esc(cert.get("honest_note", ""))}</div>'
+    )
+    summary = (f'<span class="lvchip {lvcls}">{_esc(glyph)}</span>'
+               f"<span>{_esc(name)}</span><span>{passed}/{len(claims)} claims pass</span>")
+    return _sigcard(i, "cert", "certificate", summary, body)
+
+
+def _advanced_block(p: dict[str, Any], i: int) -> str:
+    verdict = _verdict(p)
+    cards = (
+        _card_git(p, i) + _card_github(p, i) + _card_secrets(p, i) + _card_gates(p, i)
+        + _card_tests_deps(p, i) + _card_forge(p, i) + _card_certificate(p, i)
     )
     return (
-        f'<article class="card {vcls}" data-verdict="{_esc(verdict)}">'
-        f'<button type="button" class="chead" id="h{idx}" aria-expanded="false" aria-controls="d{idx}">'
-        f'<span class="cid"><span class="cname">{_esc(p["project"])}</span>'
-        f'<span class="cpath">{_esc(p["path"])}</span></span>'
-        f'<span class="hsigs">{git_h}{sec_h}{gh_h}</span>'
-        f"{_gates_meter(enf)}"
-        f'<span class="badge">{_esc(verdict)}</span>'
-        f'<span class="chev" aria-hidden="true">&#9662;</span></button>'
-        f'<div class="cbody" id="d{idx}" role="region" aria-labelledby="h{idx}" hidden>'
-        f'<div class="secgrid">{detail}</div>{planned}</div></article>'
+        f'<div class="pblock scoped {_VCLASS[verdict]}" data-p="{int(i)}" '
+        f'data-verdict="{_esc(verdict)}">'
+        f'<div class="pbhead"><span class="pbname">{_esc(p["project"])}</span>'
+        f'<span class="vbadge">{_esc(_VWORD[verdict])}</span>'
+        f'<span class="pbpath">{_esc(p["path"])}</span></div>{cards}</div>'
     )
 
 
 def _chip(flt: str, label: str, count: int, dot: str) -> str:
     return (f'<button type="button" class="fchip" data-filter="{_esc(flt)}" aria-pressed="false">'
             f'<span class="d" style="background:{dot}" aria-hidden="true"></span>'
-            f'{_esc(label)} <span class="n">{count}</span></button>')
+            f'{_esc(label)} <span class="n">{int(count)}</span></button>')
 
 
+# ---------------------------------------------------------------------------
+# Tab 3 — Configure (inspect + instruct; never pretends to save)
+# ---------------------------------------------------------------------------
+def _configure_block(p: dict[str, Any], i: int) -> str:
+    enf = p["enforcement"]
+    verdict = _verdict(p)
+    fixes = _fixes(p)
+    glines = []
+    for key, label in _GATE_LABELS.items():
+        on = bool(enf.get(key))
+        mark = ('<span class="gmark ok">&#10003; on</span>' if on
+                else '<span class="gmark bad">&#10007; off</span>')
+        glines.append(f'<div class="gline"><span>{_esc(label)}</span>{mark}</div>')
+    current = (
+        '<div class="cfgcard"><div class="cfgh">current config (read from the repo)</div>'
+        + _kv("protection posture",
+              f'<span class="vbadge {_VCLASS[verdict]}">{_esc(_VWORD[verdict])}</span>')
+        + "".join(glines)
+        + '<div class="note">Bash deny rules: the built-in list ships with the Forge '
+          "plugin (hooks/guard.py) and applies to every governed session; a project "
+          "can extend it via .forge/deny-extra.txt. Test the built-in rules below.</div>"
+        + "</div>"
+    )
+    if fixes:
+        items = []
+        for f in fixes:
+            sev = {"block": "sev-block", "review": "sev-review", "tool": "sev-tool"}[f["sev"]]
+            items.append(
+                f'<div class="fix {sev}"><div class="fixtitle">'
+                f'<span class="sevdot" aria-hidden="true"></span>{_esc(f["title"])}</div>'
+                f'<div class="fixwhy">{_esc(f["why"])}</div>{_cmdblock(f["cmd"])}</div>'
+            )
+        changes = (f'<div class="cfgcard"><div class="cfgh">to change it — run these '
+                   f"({len(fixes)})</div>" + "".join(items)
+                   + '<div class="note">Run shell commands from the project root. '
+                     "$CLAUDE_PLUGIN_ROOT is the Forge plugin checkout (set "
+                     "automatically inside Claude Code hooks; substitute the plugin "
+                     "path when running by hand). /forge-init is a Claude Code "
+                     "command.</div></div>")
+    else:
+        changes = ('<div class="cfgcard"><div class="cfgh">to change it</div>'
+                   '<div class="allgood">Nothing to change — every setting this page '
+                   "inspects is at the recommended state.</div></div>")
+    return (
+        f'<div class="cfgblock scoped" data-p="{int(i)}">'
+        f'<div class="pbhead"><span class="pbname">{_esc(p["project"])}</span>'
+        f'<span class="pbpath">{_esc(p["path"])}</span></div>'
+        f'<div class="cfggrid">{current}{changes}</div></div>'
+    )
+
+
+_TESTER_EXAMPLES = [
+    "rm -rf /",
+    "rm -rf ./build",
+    "git push --force origin main",
+    "git push origin feat",
+    "chmod +x deploy.sh",
+    "DROP TABLE users;",
+]
+
+
+def _tester() -> str:
+    exs = "".join(f'<button type="button" class="gex js-only">{_esc(e)}</button>'
+                  for e in _TESTER_EXAMPLES)
+    return (
+        '<div class="tester"><div class="cfgh">guard tester — try the deny rules live</div>'
+        '<label class="sr" for="gcmd" style="display:block;font-size:12px;'
+        'color:var(--muted);margin-bottom:7px">Type a shell command; it is checked '
+        "against a client-side port of the built-in deny rules from hooks/guard.py "
+        "(rm -rf on / or ~, force-push, mkfs, dd if=, DROP/TRUNCATE TABLE, fork bomb, "
+        "chmod -R 777 /). Nothing is executed and nothing leaves this page.</label>"
+        '<input type="text" id="gcmd" class="gin" autocomplete="off" spellcheck="false" '
+        'placeholder="e.g. git push --force origin main">'
+        '<div id="gout" class="gout" role="status" aria-live="polite"></div>'
+        f'<div class="gexs">{exs}</div>'
+        "<noscript><div class='note'>The live tester needs JavaScript. The same rules "
+        "run for real in hooks/guard.py on every governed Bash call.</div></noscript>"
+        '<div class="note">Best-effort footgun-catcher, not a security boundary '
+        "(obfuscation can evade any denylist — so the real guard also relies on least "
+        "privilege and human approval). Project-specific deny-extra.txt patterns are "
+        "not evaluated here: a static page cannot read files.</div></div>"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Page assembly
+# ---------------------------------------------------------------------------
 def render(projects: list[dict[str, Any]], collected_at: str) -> str:
     ordered = sorted(projects, key=lambda p: _ORDER[_verdict(p)])
-    counts = {v: sum(1 for p in projects if _verdict(p) == v) for v in _ORDER}
+    counts = {v: sum(1 for p in ordered if _verdict(p) == v) for v in _ORDER}
+
+    options = "".join(
+        f'<option value="{int(i)}">{_esc(p["project"])}</option>'
+        for i, p in enumerate(ordered)
+    ) + '<option value="fleet">All projects (fleet)</option>'
+
+    tabs_html = (
+        '<div class="tabs" role="tablist" aria-label="dashboard views">'
+        '<button type="button" class="tab" role="tab" id="tab-dash" '
+        'aria-controls="panel-dash" aria-selected="true">'
+        '<span class="td" aria-hidden="true"></span>Dashboard</button>'
+        '<button type="button" class="tab" role="tab" id="tab-adv" '
+        'aria-controls="panel-adv" aria-selected="false" tabindex="-1">'
+        '<span class="td" aria-hidden="true"></span>Advanced</button>'
+        '<button type="button" class="tab" role="tab" id="tab-cfg" '
+        'aria-controls="panel-cfg" aria-selected="false" tabindex="-1">'
+        '<span class="td" aria-hidden="true"></span>Configure</button></div>'
+    )
+
+    heroes = "".join(_hero(p, i) for i, p in enumerate(ordered))
+    fleet = _fleet_strip(ordered) if ordered else ""
+    dash_panel = (
+        '<section class="panel" id="panel-dash" role="tabpanel" aria-labelledby="tab-dash" '
+        f'tabindex="0"><h2 class="paneltitle">Dashboard</h2>{fleet}{heroes}</section>'
+    )
+
     chips = (
-        _chip("all", "all", len(projects), "var(--faint)")
+        _chip("all", "all", len(ordered), "var(--faint)")
         + _chip("needs-attention", "needs attention", counts["needs-attention"], "var(--block)")
         + _chip("under-protected", "under-protected", counts["under-protected"], "var(--review)")
         + _chip("healthy", "healthy", counts["healthy"], "var(--allow)")
     )
-    cards = "".join(_card(p, i) for i, p in enumerate(ordered))
-    if not cards:
-        cards = '<div class="emptymsg">no projects collected</div>'
-    return f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Forge — Real Project Status</title>
-<style>{_CSS}</style>
-<noscript><style>.cbody[hidden]{{display:block}}.chev{{display:none}}</style></noscript>
-</head>
-<body><div class="wrap"><div class="maxw">
-<header class="mast"><span class="wordmark"><span class="spark" aria-hidden="true"></span> Forge</span>
-<span class="sub">real project status · collected {_esc(collected_at)}</span></header>
-<h1>Your projects, as Forge actually sees them.</h1>
-<p class="lede">Every number below is collected live from the real repositories by
-<code>status/forge_status.py</code> (read-only). Nothing is representative or mocked.
-Click a card for the full detail; filter by verdict.</p>
-<div class="filters" role="group" aria-label="filter projects by verdict">{chips}</div>
-<main>{cards}
-<div class="emptymsg" id="noneMsg" hidden>no projects match this filter</div></main>
-<footer class="foot">real data · read-only collection · secrets scanned with --redact
-(no secret values read), scope shown per project · "not built yet" means exactly that —
-no faked workers, pipelines, or activity.</footer>
-</div></div>
-<script>{_JS}</script>
-</body></html>"""
+    adv_blocks = "".join(_advanced_block(p, i) for i, p in enumerate(ordered))
+    adv_panel = (
+        '<section class="panel" id="panel-adv" role="tabpanel" aria-labelledby="tab-adv" '
+        'tabindex="0"><h2 class="paneltitle">Advanced</h2>'
+        f'<div class="filters fleet-only" role="group" aria-label="filter projects by verdict">'
+        f"{chips}</div>{adv_blocks}"
+        '<div class="emptymsg" id="advEmpty" hidden>no projects match this filter</div></section>'
+    )
+
+    cfg_blocks = "".join(_configure_block(p, i) for i, p in enumerate(ordered))
+    cfg_panel = (
+        '<section class="panel" id="panel-cfg" role="tabpanel" aria-labelledby="tab-cfg" '
+        'tabindex="0"><h2 class="paneltitle">Configure</h2>'
+        '<div class="cfgnote">Configure inspects your real config and tells you how to '
+        "change it; it does not edit files — Forge changes go through the CLI/hooks. "
+        "Every command below is copy-pasteable and does exactly one thing.</div>"
+        f"{cfg_blocks}{_tester()}</section>"
+    )
+
+    body = dash_panel + adv_panel + cfg_panel
+    if not ordered:
+        body = '<div class="emptymsg">no projects collected</div>'
+
+    return (
+        "<!doctype html>\n"
+        '<html lang="en"><head><meta charset="utf-8">\n'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">\n'
+        "<title>Forge — Real Project Status</title>\n"
+        f"<script>{_HEAD_JS}</script>\n"
+        f"<style>{_CSS}</style>\n"
+        '</head>\n<body><div class="wrap"><div class="maxw">\n'
+        '<header><div class="mast"><span class="wordmark">'
+        '<span class="spark" aria-hidden="true"></span> Forge</span>'
+        f'<span class="sub">real project status &middot; collected {_esc(collected_at)}</span>'
+        "</div>\n<h1>Your projects, as Forge actually sees them.</h1>\n"
+        '<p class="lede">Every number on this page is collected live from the real '
+        "repositories, read-only. Nothing is representative, projected, or mocked.</p>\n"
+        '<div class="controls"><div class="scopebar"><label for="scope">project</label>'
+        f'<select id="scope" class="scope">{options}</select></div>{tabs_html}</div>'
+        f"</header>\n<main>{body}</main>\n"
+        '<footer class="foot">real data &middot; read-only collection &middot; secrets '
+        "scanned with --redact (no secret values read), scope always shown per project "
+        '&middot; the certificate states machine-verified claims at one commit, not '
+        '"secure" &middot; "not built yet" means exactly that — no faked workers, '
+        "pipelines, or activity &middot; this page makes zero external requests.</footer>\n"
+        f"</div></div>\n<script>{_JS}</script>\n</body></html>"
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
