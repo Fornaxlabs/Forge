@@ -5,7 +5,25 @@
 set -euo pipefail
 
 PLUGIN="$(cd "$(dirname "$0")/.." && pwd)"
-TARGET="${1:-$PWD}"
+
+# --harness <name> selects which agent harness's guard config to stamp.
+# Default: claude (behavior identical to before the flag existed).
+HARNESS="claude"
+TARGET=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --harness)   HARNESS="${2:?forge-init: --harness needs a value}"; shift 2 ;;
+    --harness=*) HARNESS="${1#--harness=}"; shift ;;
+    *)           TARGET="$1"; shift ;;
+  esac
+done
+TARGET="${TARGET:-$PWD}"
+case "$HARNESS" in
+  claude|codex|goose|kimi|gemini|grok|cline|kiro) ;;
+  *) echo "forge-init: unknown --harness '$HARNESS' (claude|codex|goose|kimi|gemini|grok|cline|kiro)" >&2
+     exit 1 ;;
+esac
+
 cd "$TARGET"
 
 copied=""
@@ -36,6 +54,36 @@ if [ -d .git ]; then
     copied="$copied .git/hooks/pre-push"
   fi
 fi
+
+# Harness adapter (non-claude only): stamp the matching adapters/ config with
+# the absolute plugin path substituted for __FORGE_PLUGIN_ROOT__, so the config
+# invokes the SAME hooks/guard.py. Claude Code needs no stamp — the plugin's
+# own hooks/hooks.json (via ${CLAUDE_PLUGIN_ROOT}) already wires the guard.
+stamp_adapter() { # <src-relative-to-plugin> <dest-relative-to-target>
+  if [ -e "$2" ]; then
+    skipped="$skipped $2"
+  else
+    mkdir -p "$(dirname "$2")"
+    sed "s|__FORGE_PLUGIN_ROOT__|$PLUGIN|g" "$PLUGIN/$1" > "$2"
+    copied="$copied $2"
+  fi
+}
+
+adapter_note=""
+case "$HARNESS" in
+  claude) : ;;  # native — nothing extra to stamp
+  codex)  stamp_adapter adapters/codex/hooks.json      .codex/hooks.json ;;
+  goose)  stamp_adapter adapters/goose/hooks.json      .agents/plugins/forge/hooks/hooks.json
+          adapter_note="copy/symlink .agents/plugins/forge into ~/.agents/plugins/ (Goose discovers hooks there)" ;;
+  kimi)   stamp_adapter adapters/kimi/config.toml      .forge/kimi-hooks.toml
+          adapter_note="append .forge/kimi-hooks.toml to ~/.kimi/config.toml (Kimi's config is user-global)" ;;
+  gemini) stamp_adapter adapters/gemini/settings.json  .gemini/settings.json
+          adapter_note="if .gemini/settings.json already existed it was NOT touched — merge the hooks block from adapters/gemini/ by hand" ;;
+  grok)   stamp_adapter adapters/grok/hooks.json       .grok/hooks.json ;;
+  cline)  stamp_adapter adapters/cline/settings.json   .cline/settings.json
+          adapter_note="if .cline/settings.json already existed it was NOT touched — merge the hooks block from adapters/cline/ by hand" ;;
+  kiro)   stamp_adapter adapters/kiro/hooks.json       .kiro/hooks/forge-guard.json ;;
+esac
 
 # Shared memory DB (created in ./.forge/memory.db by the CLI default).
 if python3 "$PLUGIN/memory/forge_memory.py" init >/dev/null 2>&1; then
@@ -87,10 +135,18 @@ for pat in ".forge/" "traces/runs/" "audits/"; do
 done
 
 echo "FORGE initialized in: $TARGET"
+echo "  harness:   $HARNESS"
 echo "  stamped:   ${copied:-(none - all already present)}"
 echo "  skipped:   ${skipped:-(none)}"
 echo "  memory:    $mem"
 echo "  plan-mode: $planmode"
+if [ -n "$adapter_note" ]; then
+  echo "  adapter:   $adapter_note"
+fi
+if [ "$HARNESS" != "claude" ]; then
+  echo "  NOTE: the $HARNESS adapter is built to that harness's documented hook"
+  echo "        contract but NOT yet validated on the live harness — see docs/HARNESSES.md."
+fi
 echo ""
 echo "Next steps (not automated — they need your call):"
 echo "  1. pre-commit install"

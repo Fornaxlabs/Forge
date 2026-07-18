@@ -29,6 +29,19 @@ REMAINING BOUND — only tool calls that fire this hook are counted: the mutatin
 in hooks.json's matcher (Bash/Edit/Write/MultiEdit/NotebookEdit), not reads. Claude
 Code's 200-subagent/session hard cap (CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION) backstops
 runaway fan-out.
+
+MULTI-HARNESS (2026-07-18): the decision core (is_denied / ceiling / loop cap) is
+harness-neutral. A thin adapter boundary translates at the edges only:
+- _extract() normalizes the stdin payload from any known harness (Claude Code, Codex
+  CLI, Block Goose, AWS Kiro, Gemini CLI, Kimi Code, grok-build, Cline) into
+  {command, tool_name, agent_id};
+- _emit_block() speaks the harness's block signal: exit-2 + stderr (the default —
+  the Claude Code path is byte-identical to before) or deny-JSON on stdout
+  (FORGE_BLOCK_MODE=json or --mode json), for harnesses that consume a
+  PreToolUse permissionDecision instead of an exit code.
+Install configs per harness live in adapters/; the honest validation matrix is
+docs/HARNESSES.md. Everything runs THIS one file — there are no per-harness forks
+of the decision logic.
 """
 from __future__ import annotations
 
@@ -212,34 +225,119 @@ def iteration_breached(now: float | None = None) -> bool:
         return False
 
 
-def decide(payload: dict[str, Any]) -> int:
-    ti = payload.get("tool_input") or {}
-    command = ti.get("command", "") if isinstance(ti, dict) else ""
+# --- harness adapter boundary ------------------------------------------------
+# The decision core above is harness-neutral; only the two functions below know
+# that harnesses differ. Payload-shape and block-signal knowledge stops here.
+
+# Containers a harness may nest the tool arguments under. Claude Code, Codex,
+# Kiro, and Cline use tool_input; Gemini CLI and camelCase harnesses use
+# toolInput; some emit params/arguments; a bare top-level "command" is the
+# last resort.
+_INPUT_KEYS = ("tool_input", "toolInput", "params", "arguments")
+_TOOL_NAME_KEYS = ("tool_name", "toolName", "tool")
+_AGENT_ID_KEYS = ("agent_id", "agentId", "agent")
+
+
+def _extract(payload: dict[str, Any]) -> dict[str, str]:
+    """Normalize a PreToolUse-style payload from ANY known harness into
+    {command, tool_name, agent_id}. Missing/foreign fields -> "" — never raise;
+    an unrecognized shape must degrade to "no command seen", not a crash
+    (the fail-open contract extends to parsing)."""
+    command = ""
+    for key in _INPUT_KEYS:
+        inner = payload.get(key)
+        if isinstance(inner, dict) and isinstance(inner.get("command"), str):
+            command = inner["command"]
+            break
+    if not command and isinstance(payload.get("command"), str):
+        command = payload["command"]
+    tool_name = ""
+    for key in _TOOL_NAME_KEYS:
+        val = payload.get(key)
+        if isinstance(val, str):
+            tool_name = val
+            break
+    agent_id = ""
+    for key in _AGENT_ID_KEYS:
+        val = payload.get(key)
+        if isinstance(val, str):
+            agent_id = val
+            break
+    return {"command": command, "tool_name": tool_name, "agent_id": agent_id}
+
+
+def evaluate(payload: dict[str, Any]) -> str | None:
+    """Harness-neutral core decision: the deny reason, or None to allow.
+    Same checks, same order, same messages as the guard has always enforced
+    (deny-list -> loop cap -> ceiling tick). Ticks the run counter as a side
+    effect, exactly as before."""
+    command = _extract(payload)["command"]
     if command and is_denied(command):
-        print("FORGE guard: destructive command blocked", file=sys.stderr)
-        return 2
+        return "FORGE guard: destructive command blocked"
     if iteration_breached():
-        print(
+        return (
             "FORGE guard: loop cap — the same blocker exceeded the iteration limit; "
-            "attribute (PLAN|CONTEXT|TOOL|CAPABILITY) and escalate to a human",
-            file=sys.stderr,
+            "attribute (PLAN|CONTEXT|TOOL|CAPABILITY) and escalate to a human"
         )
-        return 2
     if tick_and_check():
-        print(
-            "FORGE guard: tool-call ceiling reached — run halted, escalate to a human",
-            file=sys.stderr,
-        )
-        return 2
-    return 0
+        return "FORGE guard: tool-call ceiling reached — run halted, escalate to a human"
+    return None
+
+
+def _block_mode(argv: list[str] | None = None) -> str:
+    """Resolve the block-signal mode: 'exit2' (default) or 'json'.
+    Precedence: --mode flag > FORGE_BLOCK_MODE env > exit2. Anything
+    unrecognized falls back to exit2 — the mode selector must never be a way
+    to accidentally disable blocking."""
+    argv = sys.argv[1:] if argv is None else argv
+    mode = ""
+    for i, arg in enumerate(argv):
+        if arg.startswith("--mode="):
+            mode = arg.split("=", 1)[1]
+        elif arg == "--mode" and i + 1 < len(argv):
+            mode = argv[i + 1]
+    if not mode:
+        mode = os.environ.get("FORGE_BLOCK_MODE", "")
+    return "json" if mode.strip().lower() == "json" else "exit2"
+
+
+def _emit_block(reason: str, mode: str) -> int:
+    """Speak the harness's block signal for a confirmed deny.
+    exit2 (default): reason on stderr, exit 2 — Claude Code, Codex, Kiro,
+    Cline, Gemini, grok-build, Goose, Kimi all block on this.
+    json: the PreToolUse deny-decision object on stdout, exit 0 — for
+    harnesses that consume a permissionDecision instead of the exit code."""
+    if mode == "json":
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": reason,
+            }
+        }))
+        return 0
+    print(reason, file=sys.stderr)
+    return 2
+
+
+def decide(payload: dict[str, Any]) -> int:
+    """Claude Code contract, unchanged: exit-2 + stderr on deny, 0 on allow."""
+    reason = evaluate(payload)
+    if reason is None:
+        return 0
+    return _emit_block(reason, "exit2")
 
 
 def main() -> int:
     try:
+        mode = _block_mode()
         payload = json.load(sys.stdin)
         if not isinstance(payload, dict):
             return 0  # non-object JSON (null/[]/"x") → nothing to guard
-        return decide(payload)
+        if mode == "exit2":
+            return decide(payload)  # the exact pre-multi-harness Claude Code path
+        reason = evaluate(payload)
+        return 0 if reason is None else _emit_block(reason, mode)
     except Exception:  # noqa: BLE001 — fail OPEN on ANY error, per the contract
         return 0
 

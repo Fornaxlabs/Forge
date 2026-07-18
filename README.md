@@ -57,6 +57,22 @@ Python/FastAPI-flavored today. Not a hand-holder for beginners.
   run_end) and drives the ceiling. No evidence = didn't happen.
 - **Evals** — 10 planted-fault tasks + a scorecard to catch harness regressions.
 
+## Multi-harness
+
+The guard is harness-neutral: one decision core (`hooks/guard.py` — deny-list,
+tool-call ceiling, loop cap) that reads any documented pre-tool payload shape
+and speaks two block signals (exit-2 + stderr, or deny-JSON via `--mode json` /
+`FORGE_BLOCK_MODE=json`). Thin install configs in `adapters/` wire that same
+file into Codex CLI, Block Goose, AWS Kiro, Gemini CLI (`BeforeTool`), Kimi
+Code, grok-build, and Cline; `scripts/forge-init.sh --harness <name>` stamps
+the right one into a project (default `claude`, unchanged).
+
+**Honesty first:** only the Claude Code path is validated end-to-end. Every
+other adapter is built to that harness's documented hook contract and NOT yet
+proven on the live harness. OpenCode and Copilot have documented
+subagent/MCP bypass gaps; Aider has no pre-tool hook at all (git/CI floor
+only). Full matrix with citations: [docs/HARNESSES.md](docs/HARNESSES.md).
+
 ## Install into a target project
 0. Start version control: `git init` and create a PRIVATE GitHub repo before real
    work — `gh repo create <name> --private --source . --push`. FORGE assumes a git

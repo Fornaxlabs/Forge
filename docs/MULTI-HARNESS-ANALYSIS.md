@@ -1,5 +1,22 @@
 # Forge — Multi-Harness Strategy Analysis
 
+> **STATUS UPDATE (2026-07-18) — Phases 1–2 of the roadmap below are BUILT.**
+> The harness-neutral core + thin-adapter split now exists: `hooks/guard.py`
+> carries the neutral decision core (`evaluate()`), a payload normalizer
+> (`_extract()` — handles `tool_input`/`toolInput`/`params`/`arguments`/bare
+> `command`), and a dual block-signal emitter (exit-2 + stderr default,
+> deny-JSON via `--mode json` / `FORGE_BLOCK_MODE=json`). Install configs ship
+> in `adapters/` for Codex CLI, Block Goose, AWS Kiro, Gemini CLI, Kimi Code,
+> grok-build, and Cline, stamped by `forge-init.sh --harness <name>`. The
+> landscape turned out broader than §2 estimated: **8+ harnesses now expose
+> the same PreToolUse/exit-2 contract** (plus the Open-Plugins `hooks/hooks.json`
+> standard Goose auto-discovers), with Gemini CLI the naming outlier
+> (`BeforeTool`). Validation is honest and per-harness — Claude Code
+> end-to-end, everything else contract-built only; OpenCode/Copilot have
+> documented subagent-bypass gaps; Aider stays git/CI-floor-only. See
+> **docs/HARNESSES.md** for the living matrix. The strategy analysis below is
+> kept as written (July 2026).
+
 **Question:** Can Forge become genuinely *unique and better* by going multi-agent (Claude Code + Codex + more), and what is the honest positioning against ECC?
 
 **One-line verdict:** Yes — but not by copying ECC. Forge's defensible identity is **the portable enforcement floor for AI coding agents**: the small, hard, non-optional layer (guard + git/CI gates + loop discipline + compounding evals) that survives *whichever* agent you use and *switching between them*. That is an empty niche today. It is real, it is grounded in what the agents now expose, and it is achievable by a solo maintainer *only because it stays lean*. Breadth would kill it; enforcement is the wedge.

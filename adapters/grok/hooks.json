@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [{
+          "type": "command",
+          "command": "python3 \"__FORGE_PLUGIN_ROOT__/hooks/guard.py\"",
+          "timeout": 15
+        }]
+      }
+    ]
+  }
+}

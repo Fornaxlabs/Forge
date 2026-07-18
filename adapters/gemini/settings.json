@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "BeforeTool": [
+      {
+        "matcher": "run_shell_command|write_file|replace",
+        "hooks": [{
+          "type": "command",
+          "command": "python3 \"__FORGE_PLUGIN_ROOT__/hooks/guard.py\"",
+          "timeout": 15
+        }]
+      }
+    ]
+  }
+}

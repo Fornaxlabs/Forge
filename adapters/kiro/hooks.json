@@ -1,0 +1,8 @@
+{
+  "name": "forge-guard",
+  "description": "Forge deny-list + tool-call ceiling + loop cap (hooks/guard.py)",
+  "event": "PreToolUse",
+  "matcher": "*",
+  "command": "python3 \"__FORGE_PLUGIN_ROOT__/hooks/guard.py\"",
+  "timeout": 15
+}

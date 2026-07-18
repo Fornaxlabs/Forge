@@ -1,0 +1,8 @@
+# Forge guard hook for Kimi Code CLI — append to ~/.kimi/config.toml.
+# Replace __FORGE_PLUGIN_ROOT__ with the absolute path to your Forge checkout
+# (scripts/forge-init.sh --harness kimi stamps a substituted copy for you).
+[[hooks]]
+event = "PreToolUse"
+matcher = "Bash|Edit|Write|MultiEdit|NotebookEdit"
+command = "python3 \"__FORGE_PLUGIN_ROOT__/hooks/guard.py\""
+timeout = 15
