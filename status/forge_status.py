@@ -45,19 +45,28 @@ def _has(tool: str) -> bool:
 
 
 def probe_git(d: str) -> dict[str, Any]:
-    rc, branch = _run(["git", "branch", "--show-current"], d)
-    _, last = _run(["git", "log", "-1", "--format=%s\x1f%cr"], d)
-    subject, _, ago = last.strip().partition("\x1f")
-    _, status = _run(["git", "status", "--porcelain"], d)
-    uncommitted = len([ln for ln in status.splitlines() if ln.strip()]) if status.strip() and "not-installed" not in status else 0
-    _, remote = _run(["git", "remote", "get-url", "origin"], d)
+    # EVERY field is gated on its command's OWN exit code: _run merges stderr into
+    # the output, so on a non-repo dir / commit-less repo / remote-less repo the
+    # "output" is git's error text ("fatal: not a git repository ...", "fatal: ...
+    # does not have any commits yet", "error: No such remote 'origin'") — which
+    # must never be reported as a branch name, commit subject, dirty file, or URL.
+    rc_branch, branch = _run(["git", "branch", "--show-current"], d)
+    rc_log, last = _run(["git", "log", "-1", "--format=%s\x1f%cr"], d)
+    subject, _, ago = last.strip().partition("\x1f") if rc_log == 0 else ("", "", "")
+    rc_status, status = _run(["git", "status", "--porcelain"], d)
+    uncommitted = (len([ln for ln in status.splitlines() if ln.strip()])
+                   if rc_status == 0 else 0)
+    rc_remote, remote = _run(["git", "remote", "get-url", "origin"], d)
+    has_remote = bool(rc_remote == 0 and remote.strip())
     return {
-        "branch": branch.strip() or "(detached)",
+        # Inside a repo, an empty branch name means a detached HEAD; outside a
+        # repo (rc != 0) there is no branch at all — report blank, not an alias.
+        "branch": (branch.strip() or "(detached)") if rc_branch == 0 else "",
         "last_commit": subject.strip()[:80],
         "last_commit_ago": ago.strip(),
         "uncommitted_files": uncommitted,
-        "has_remote": bool(rc == 0 and remote.strip() and "not-installed" not in remote),
-        "remote": remote.strip() if remote.strip() and "not-installed" not in remote else None,
+        "has_remote": has_remote,
+        "remote": remote.strip() if has_remote else None,
     }
 
 
@@ -125,6 +134,12 @@ def _gitleaks_scan(base_args: list[str], cwd: str, timeout: float) -> Any:
             with open(rep) as fh:
                 data = json.load(fh)
         except (OSError, ValueError):
+            # No readable report. rc == 0 means gitleaks genuinely found nothing;
+            # any other rc means the scan FAILED — that must surface as an error
+            # status, NEVER as a clean zero count (which would fail open straight
+            # into the certificate's secrets-clean claim).
+            if rc != 0:
+                return f"error (rc {rc})"
             data = []
         if not isinstance(data, list):
             data = []
