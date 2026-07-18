@@ -31,3 +31,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: gitleaks/gitleaks-action@v2
+
+  certify:
+    # Continuous self-certification: regenerate "Forge Verified" from real signals on
+    # every push, tied to this commit, and keep the manifest as an artifact. The level
+    # is honest — it reflects what actually passes here (needs the gate+security jobs).
+    needs: [gate, security]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history so the secrets scan is real, not shallow
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: forge certify (machine-verified claims only)
+        # Informational: generate the manifest regardless of level. The gate + security
+        # jobs are the real enforcement; the level here will honestly be low in CI (the
+        # local pre-push git hook isn't in a fresh checkout), and that's fine — we keep
+        # the honest manifest as an artifact, we don't gate merges on it.
+        run: |
+          python3 status/forge_certify.py . --json > FORGE-CERT.json || true
+          python3 -c "import json;d=json.load(open('FORGE-CERT.json'));print('Forge Verified level:',d['level'])"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: forge-cert
+          path: FORGE-CERT.json
