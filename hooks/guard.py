@@ -1,19 +1,27 @@
 #!/usr/bin/env python3
 """FORGE PreToolUse guard.
 
-Two enforced controls that used to be mere prose in CLAUDE.md:
+Three enforced controls that used to be mere prose in CLAUDE.md:
 1. Deny destructive Bash commands (rm -rf /, force-push, drop table, ...).
-2. Enforce the run tool-call ceiling ("noodrem") — but only while a FORGE run is
-   active, so it never blocks unrelated sessions.
+2. Enforce the run tool-call ceiling — counts MUTATING actions (Bash/Edit/Write/
+   MultiEdit/NotebookEdit; see hooks.json matcher), not reads, and only while a
+   FORGE run is active, so it never blocks unrelated sessions.
+3. Enforce the loop cap (same blocker exceeded its iteration limit → block + escalate).
 
 Exit 2 blocks the tool call. The guard fails OPEN: any internal error returns 0
 (allow), so a bug here can never wedge the user's shell. It only ever blocks on a
-confirmed match or a confirmed ceiling breach.
+confirmed match or a confirmed ceiling/loop breach.
 
-HONEST LIMIT: the deny check is a best-effort footgun-catcher, NOT a security
-boundary. A denylist can never be complete — obfuscation (base64, eval, encoded
-args) will get through. Real protection against a determined adversary is least
+HONEST LIMIT 1 — deny is a footgun-catcher, NOT a security boundary: a denylist can
+never be complete (base64/eval/encoded args get through). Real protection = least
 privilege + human approval for destructive ops + not executing untrusted input.
+
+HONEST LIMIT 2 — the ceiling/loop cap count only tool calls that fire THIS hook.
+Claude Code exposes no supported run-wide budget across subagents, and it is not
+guaranteed that a subagent's tool calls trigger the parent's PreToolUse hook. So a
+run that fans work out across many subagents can exceed the ceiling without being
+halted (observed: a real run reached 118 vs a ceiling of 40). This governs the
+primary agent's tool stream; it is not a whole-fleet budget.
 """
 from __future__ import annotations
 

@@ -26,8 +26,11 @@ then build only via `/forge <task>`, one approved task at a time.
 
 ## Loops
 Max 3 review iterations per BLOCKER; a repeat forces attribution
-(PLAN | CONTEXT | TOOL | CAPABILITY) then a human. Hard stop at >40 tool calls
-(enforced by hooks/guard.py).
+(PLAN | CONTEXT | TOOL | CAPABILITY) then a human. Hard stop at >40 **mutating tool
+actions** (Bash/Edit/Write/MultiEdit/NotebookEdit — not reads), enforced by
+hooks/guard.py. LIMIT: this counts the primary agent's tool stream; Claude Code
+exposes no run-wide budget across subagents, so heavily fanned-out runs can exceed
+it uncounted — keep subagent fan-out modest, or checkpoint per subagent.
 
 ## Commands
 Test: `pytest -q` · Lint: `ruff check . && mypy .` · Run: `uv run ...`

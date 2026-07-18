@@ -26,7 +26,7 @@ before an approved plan.
 
 ## Loops
 Max 3 review iterations per BLOCKER; a repeat forces attribution
-(PLAN | CONTEXT | TOOL | CAPABILITY) then a human. Hard stop at >40 tool calls
+(PLAN | CONTEXT | TOOL | CAPABILITY) then a human. Hard stop at >40 mutating tool actions
 (enforced by hooks/guard.py).
 
 ## Commands

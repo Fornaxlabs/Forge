@@ -111,13 +111,19 @@ bash scripts/forge-comply.sh
   privilege + human approval for destructive ops + not executing untrusted input.
   The guard's job is to stop the *honest mistake* and the *runaway loop* — and at
   that, it is 100% / 0% on the corpus above.
-- **FORGE does not yet run CI on itself.** It ships the CI template + pre-push gate
-  for the projects it bootstraps, but the plugin repo's own `forge-comply` reports
-  "pre-push gate NOT installed / CI workflow MISSING." Physician, heal thyself — this
-  is a known gap, tracked, not hidden.
+- **The tool-call ceiling / loop cap count only tool calls that fire the guard hook.**
+  They now count mutating actions (Bash/Edit/Write/MultiEdit/NotebookEdit), not just
+  Bash — but Claude Code exposes no supported run-wide budget across subagents, and a
+  subagent's tool calls are not guaranteed to trigger the parent's PreToolUse hook. So
+  a run that fans out across many subagents can exceed the ceiling without being halted
+  — a real run did (reached 118 vs a ceiling of 40). This governs the primary agent's
+  tool stream, not a whole-fleet budget. Known limitation, recorded in that run's trace.
 - **Multi-agent is Claude-Code-only today.** The Codex adapter (the portability
   claim) is designed in `docs/MULTI-HARNESS-ANALYSIS.md` but not yet built. Until it
   ships, "portable across agents" is a roadmap item, not a fact.
+- **FORGE now runs CI on itself** (`.github/workflows/forge-ci.yml`: ruff, mypy,
+  pytest+coverage, guard-proof, self-audit, gitleaks) and installs its own gates — the
+  earlier "physician heal thyself" gap is closed as of v4.1.0.
 - **Coverage ≠ correctness.** 93% is a floor for regression safety, not a proof of
   bug-freedom.
 

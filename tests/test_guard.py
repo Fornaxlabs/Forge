@@ -179,3 +179,22 @@ def test_stale_run_ignores_blockers(tmp_path, monkeypatch):
 def test_no_active_run_no_breach(tmp_path, monkeypatch):
     monkeypatch.setenv("FORGE_HOME", str(tmp_path / "nope"))
     assert guard.iteration_breached() is False
+
+
+# --- 2026-07-18: ceiling now counts MUTATING actions, not just Bash ---
+
+def test_ceiling_counts_non_bash_mutating_tool(tmp_path, monkeypatch):
+    """An Edit tool call (no shell command) must still tick the ceiling — the gap
+    that let subagent/edit-heavy runs blow past the limit uncounted."""
+    import time as _t
+    home = tmp_path / ".forge"
+    home.mkdir(parents=True)
+    (home / "active_run.json").write_text(json.dumps({
+        "run_id": "r", "path": str(home / "runs" / "r.jsonl"),
+        "started_at": _t.time(), "tool_calls": 0, "ceiling": 2,
+    }))
+    monkeypatch.setenv("FORGE_HOME", str(home))
+    edit = {"tool_name": "Edit", "tool_input": {"file_path": "x.py", "old_string": "a", "new_string": "b"}}
+    assert guard.decide(edit) == 0   # call 1 (count 1 <= 2)
+    assert guard.decide(edit) == 0   # call 2 (count 2 <= 2)
+    assert guard.decide(edit) == 2   # call 3 (count 3 > 2) -> blocked, even though it's not Bash
