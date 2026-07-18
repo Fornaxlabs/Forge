@@ -111,13 +111,16 @@ bash scripts/forge-comply.sh
   privilege + human approval for destructive ops + not executing untrusted input.
   The guard's job is to stop the *honest mistake* and the *runaway loop* — and at
   that, it is 100% / 0% on the corpus above.
-- **The tool-call ceiling / loop cap count only tool calls that fire the guard hook.**
-  They now count mutating actions (Bash/Edit/Write/MultiEdit/NotebookEdit), not just
-  Bash — but Claude Code exposes no supported run-wide budget across subagents, and a
-  subagent's tool calls are not guaranteed to trigger the parent's PreToolUse hook. So
-  a run that fans out across many subagents can exceed the ceiling without being halted
-  — a real run did (reached 118 vs a ceiling of 40). This governs the primary agent's
-  tool stream, not a whole-fleet budget. Known limitation, recorded in that run's trace.
+- **The tool-call ceiling / loop cap enforce RUN-WIDE — verified.** They count mutating
+  actions (Bash/Edit/Write/MultiEdit/NotebookEdit) across the main agent *and every
+  subagent*. An empirical study (2026-07-18, headless-run experiments) established: (a)
+  a subagent's tool calls DO fire the parent PreToolUse hook with `agent_id`, and (b)
+  anchoring the counter to `$CLAUDE_PROJECT_DIR/.forge` makes the whole fleet share one
+  counter regardless of cwd. Proof: with ceiling=3, a *subagent's* 4th run-wide call was
+  blocked (exit 2). The earlier 118-vs-40 miss was a cwd-relative-counter bug (agents in
+  different dirs didn't share state), not subagent bypass — now fixed. Bound: only tool
+  calls that fire the hook are counted (mutating tools, not reads); Claude Code's
+  200-subagent/session cap backstops fan-out.
 - **Multi-agent is Claude-Code-only today.** The Codex adapter (the portability
   claim) is designed in `docs/MULTI-HARNESS-ANALYSIS.md` but not yet built. Until it
   ships, "portable across agents" is a roadmap item, not a fact.

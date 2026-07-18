@@ -16,12 +16,19 @@ HONEST LIMIT 1 — deny is a footgun-catcher, NOT a security boundary: a denylis
 never be complete (base64/eval/encoded args get through). Real protection = least
 privilege + human approval for destructive ops + not executing untrusted input.
 
-HONEST LIMIT 2 — the ceiling/loop cap count only tool calls that fire THIS hook.
-Claude Code exposes no supported run-wide budget across subagents, and it is not
-guaranteed that a subagent's tool calls trigger the parent's PreToolUse hook. So a
-run that fans work out across many subagents can exceed the ceiling without being
-halted (observed: a real run reached 118 vs a ceiling of 40). This governs the
-primary agent's tool stream; it is not a whole-fleet budget.
+RUN-WIDE ENFORCEMENT (2026-07-18, empirically verified): the ceiling + loop cap span
+the WHOLE fleet — main agent AND subagents. Two verified facts make this work:
+(a) a subagent's tool calls DO fire this same PreToolUse hook, carrying agent_id; and
+(b) anchoring active_run.json to $CLAUDE_PROJECT_DIR/.forge (see _forge_home) gives the
+main agent and every subagent ONE shared counter, regardless of each tool's cwd.
+Validated end-to-end: with ceiling=3, a subagent's 4th run-wide call was blocked
+(exit 2). The earlier 118-vs-40 miss was NOT subagent bypass — it was the old
+cwd-relative counter, so agents running in different dirs didn't share state. Fixed.
+
+REMAINING BOUND — only tool calls that fire this hook are counted: the mutating tools
+in hooks.json's matcher (Bash/Edit/Write/MultiEdit/NotebookEdit), not reads. Claude
+Code's 200-subagent/session hard cap (CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION) backstops
+runaway fan-out.
 """
 from __future__ import annotations
 
@@ -101,15 +108,34 @@ def is_denied(command: str) -> bool:
     return False
 
 
+def _forge_home() -> str:
+    """Resolve the .forge dir INDEPENDENTLY of the tool's working directory.
+
+    Empirically (verified 2026-07-18) a subagent's tool calls fire this same hook and
+    every hook invocation — main agent and every subagent — receives the same
+    CLAUDE_PROJECT_DIR. Anchoring here means all of them read/write the SAME
+    active_run.json, so the ceiling + loop cap count RUN-WIDE (the whole fleet), not
+    per-cwd. Precedence: explicit FORGE_HOME > $CLAUDE_PROJECT_DIR/.forge > ./.forge.
+    (The old cwd-relative default silently no-op'd enforcement whenever a tool ran
+    from a directory other than the one the run was started in — the 118-vs-40 bug.)"""
+    home = os.environ.get("FORGE_HOME")
+    if home:
+        return home
+    proj = os.environ.get("CLAUDE_PROJECT_DIR")
+    if proj:
+        return os.path.join(proj, ".forge")
+    return ".forge"
+
+
 def _active_run_path() -> str:
-    return os.path.join(os.environ.get("FORGE_HOME", ".forge"), "active_run.json")
+    return os.path.join(_forge_home(), "active_run.json")
 
 
 def _extra_patterns() -> list[str]:
-    """Project-specific deny regexes from ${FORGE_HOME}/deny-extra.txt (one per line,
+    """Project-specific deny regexes from ${forge-home}/deny-extra.txt (one per line,
     '#' comments allowed). Lets a project extend the deny-list WITHOUT forking the
     shared plugin — e.g. FornaxOS adds nft/ip/rpm-ostree lockout patterns here."""
-    path = os.path.join(os.environ.get("FORGE_HOME", ".forge"), "deny-extra.txt")
+    path = os.path.join(_forge_home(), "deny-extra.txt")
     try:
         with open(path) as fh:
             return [

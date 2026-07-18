@@ -28,7 +28,16 @@ VALID_TRIAGE = ("SMALL", "MEDIUM", "LARGE")
 
 
 def _home() -> str:
-    return os.environ.get("FORGE_HOME", ".forge")
+    """Same resolution as hooks/guard.py::_forge_home — anchor run state to a
+    CWD-independent path so the guard (fired from any agent, any dir) finds the SAME
+    active_run.json. Precedence: FORGE_HOME > $CLAUDE_PROJECT_DIR/.forge > ./.forge."""
+    home = os.environ.get("FORGE_HOME")
+    if home:
+        return home
+    proj = os.environ.get("CLAUDE_PROJECT_DIR")
+    if proj:
+        return os.path.join(proj, ".forge")
+    return ".forge"
 
 
 def _active_path() -> str:

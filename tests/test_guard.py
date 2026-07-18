@@ -198,3 +198,15 @@ def test_ceiling_counts_non_bash_mutating_tool(tmp_path, monkeypatch):
     assert guard.decide(edit) == 0   # call 1 (count 1 <= 2)
     assert guard.decide(edit) == 0   # call 2 (count 2 <= 2)
     assert guard.decide(edit) == 2   # call 3 (count 3 > 2) -> blocked, even though it's not Bash
+
+
+# --- 2026-07-18: run-state anchored to CLAUDE_PROJECT_DIR (CWD-independent) ---
+
+def test_forge_home_resolution(monkeypatch, tmp_path):
+    monkeypatch.delenv("FORGE_HOME", raising=False)
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    assert guard._forge_home() == ".forge"                          # cwd fallback
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    assert guard._forge_home() == str(tmp_path / ".forge")          # project anchor
+    monkeypatch.setenv("FORGE_HOME", "/explicit")
+    assert guard._forge_home() == "/explicit"                       # explicit wins
