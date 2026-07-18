@@ -794,6 +794,12 @@ svg.pipe { width:100%; height:auto; display:block; }
   letter-spacing:.04em; }
 #tip .tb { color:var(--muted); margin-top:3px; font-size:11.5px;
   overflow-wrap:anywhere; }
+.backlink { font-family:var(--mono); font-size:12px; color:var(--tool);
+  text-decoration:none; display:inline-block; margin:0 0 12px;
+  text-underline-offset:3px; }
+.backlink:hover { color:var(--ink); text-decoration:underline; }
+.backlink:focus-visible { outline:2px solid var(--ember); outline-offset:2px;
+  border-radius:6px; }
 .empty { padding:56px 28px; text-align:center; margin-top:20px; }
 .empty .big { font-family:var(--mono); font-size:19px; font-weight:700;
   margin-bottom:8px; }
@@ -1053,10 +1059,26 @@ def _head(title: str) -> str:
     )
 
 
-def render_empty() -> str:
+def _back_link(back_href: str | None) -> str:
+    """Small escape hatch back to the dashboard index (dashboard-driven renders
+    only; the standalone CLI emits no link)."""
+    if not back_href:
+        return ""
+    return f'<a class="backlink" href="{esc(back_href)}">&larr; back to dashboard</a>'
+
+
+def _provenance(source: str | None) -> str:
+    """Footer provenance line. Standalone CLI keeps the honest sample banner;
+    dashboard-driven renders state the real trace file instead."""
+    if source is None:
+        return html.escape(SAMPLE_BANNER)
+    return f"trace: {esc(source, 300)} — rendered only from its recorded events"
+
+
+def render_empty(back_href: str | None = None, source: str | None = None) -> str:
     return (
         _head("FORGE — no run")
-        + '<div class="wrap"><div class="maxw">'
+        + f'<div class="wrap"><div class="maxw">{_back_link(back_href)}'
         '<div class="mast"><span class="wordmark"><span class="spark"></span> '
         "Forge</span>"
         '<span class="sub">pipeline run recorder</span></div>'
@@ -1065,7 +1087,7 @@ def render_empty() -> str:
         "<b>/forge</b> — every governed run records a JSONL trace this page "
         "can replay.</p></div>"
         f'<div class="foot"><span class="b">FORGE run pipeline</span>'
-        f"<span>{html.escape(SAMPLE_BANNER)}</span></div>"
+        f"<span>{_provenance(source)}</span></div>"
         "</div></div>\n</body>\n</html>\n"
     )
 
@@ -1183,7 +1205,8 @@ def _legend(m: Model) -> str:
     return f'<div class="legend" aria-hidden="true">{spans}</div>'
 
 
-def render_page(m: Model) -> str:
+def render_page(m: Model, back_href: str | None = None,
+                source: str | None = None) -> str:
     svg, fx_edges = build_svg(m)
     vx, vy, vw, vh = _viewbox(m)
     payload: dict[str, object] = {
@@ -1209,13 +1232,20 @@ def render_page(m: Model) -> str:
     hud_loop = f"×{maxc}" if maxc >= 2 else "—"
     hud_loop_cls = "hloop capped" if m.cap_idx >= 0 else ("hloop lit" if maxc >= 2 else "hloop")
     last_t = m.rows[-1].t if m.rows else ""
+    if source is None:
+        banner = f'<div class="banner"><b>SAMPLE</b> · {html.escape(SAMPLE_BANNER)}</div>'
+    else:
+        banner = (
+            f'<div class="banner"><b>TRACE</b> · {esc(source, 300)} — every event on '
+            "this page comes from that recorded JSONL; nothing is fabricated.</div>"
+        )
     body = (
-        '<div class="wrap"><div class="maxw">'
+        f'<div class="wrap"><div class="maxw">{_back_link(back_href)}'
         '<div class="mast"><span class="wordmark"><span class="spark"></span> '
         f'Forge</span><span class="sub">{sub}</span></div>'
         f'<h1><span class="hot">run:</span> {m.task}</h1>'
         f"{_runbar(m)}"
-        f'<div class="banner"><b>SAMPLE</b> · {html.escape(SAMPLE_BANNER)}</div>'
+        f"{banner}"
         '<div class="card pipecard">'
         '<div class="caption"><h2>Run pipeline</h2>'
         '<div class="hud">'
@@ -1232,7 +1262,7 @@ def render_page(m: Model) -> str:
         f'<div class="lower">{_evlist(m)}{_insight(m)}</div>'
         f'<div class="foot"><span class="b">FORGE run pipeline · rendered by '
         "traces/render_pipeline.py</span>"
-        f"<span>{html.escape(SAMPLE_BANNER)}</span>"
+        f"<span>{_provenance(source)}</span>"
         "<span>self-contained · zero external requests · press play or scrub</span>"
         "</div></div></div>"
         '<div id="tip" role="status" aria-live="polite"><div class="tt"></div>'
@@ -1241,6 +1271,20 @@ def render_page(m: Model) -> str:
         f"<script>{JS}</script>"
     )
     return _head(f"FORGE run — {m.task}") + body + "\n</body>\n</html>\n"
+
+
+def render(text: str, back_href: str | None = None, source: str | None = None) -> str:
+    """Import surface (used by status/forge_dashboard.py): render raw trace
+    JSONL text to one complete self-contained HTML page.
+
+    Empty/invalid text renders the honest "No run to show" page — never a
+    fabricated run. back_href adds a "back to dashboard" link; source (the real
+    trace path) replaces the sample banner with a provenance line.
+    """
+    events = parse_trace(text)
+    if not events:
+        return render_empty(back_href, source)
+    return render_page(build_model(events), back_href=back_href, source=source)
 
 
 def main(argv: list[str] | None = None) -> int:

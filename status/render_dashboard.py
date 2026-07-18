@@ -10,7 +10,8 @@ Three tabs, one project selector:
                plain-language fact tiles, and the one top fix as a callout.
   Advanced   — every real signal as expandable cards (git, GitHub, secrets with
                scope, the 6 enforcement gates as a segmented meter, tests, deps,
-               forge, certificate claims with evidence).
+               runs — real discovered traces linking to their rendered pipeline
+               pages, never fabricated — forge, certificate claims with evidence).
   Configure  — HONEST reframe: a static file cannot save settings, so this tab
                inspects the real config and shows the exact shell command for
                each change, plus a live guard-rule tester that ports the actual
@@ -299,6 +300,25 @@ font-size:11px;color:var(--faint);font-family:var(--mono);line-height:1.55}
 .planned b{color:var(--muted)}
 .emptymsg{font-family:var(--mono);font-size:12.5px;color:var(--faint);
 border:1px dashed var(--hairline);border-radius:12px;padding:22px;text-align:center}
+/* runs card (Advanced): one row per REAL discovered trace */
+.runrow{display:flex;gap:8px 14px;align-items:baseline;flex-wrap:wrap;
+padding:8px 0;border-top:1px solid var(--hairline);font-size:12.5px}
+.runrow:first-of-type{border-top:0;padding-top:4px}
+.runout{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.06em;
+text-transform:uppercase;padding:2.5px 9px;border-radius:999px;flex:none}
+.ro-ok{color:var(--allow);background:color-mix(in srgb,var(--allow) 13%,transparent)}
+.ro-esc{color:var(--escalate);background:color-mix(in srgb,var(--escalate) 13%,transparent)}
+.ro-dim{color:var(--muted);background:var(--elevated);border:1px solid var(--hairline)}
+.runtask{font-weight:600;min-width:0;overflow-wrap:anywhere}
+.runid{font-family:var(--mono);font-size:11px;color:var(--muted);overflow-wrap:anywhere}
+.runmeta{font-family:var(--mono);font-size:11px;color:var(--faint);
+font-variant-numeric:tabular-nums}
+.runlink{font-family:var(--mono);font-size:11.5px;margin-left:auto;flex:none;
+color:var(--tool);text-decoration:none;text-underline-offset:3px}
+a.runlink:hover{color:var(--ink);text-decoration:underline}
+.norun{font-family:var(--mono);font-size:12px;color:var(--muted);line-height:1.7;
+border:1px dashed var(--hairline);border-radius:10px;padding:14px 16px;margin-top:8px}
+.norun code{color:var(--ember);font-size:11.5px}
 
 /* ================= configure ================= */
 .rulenote{border:1px solid var(--hairline);border-left:3px solid var(--tool);
@@ -905,6 +925,13 @@ def _hero(p: dict[str, Any], i: int) -> str:
                     '<span class="hfixtitle">Nothing needs you right now.</span></div>'
                     '<p class="hfixwhy">Every setting this page inspects is at the '
                     "recommended state.</p></div>")
+    runs = p.get("runs") or []
+    runs_link = ""
+    if runs:
+        nr = len(runs)
+        runs_link = (f'<button type="button" class="linklike js-only" data-goto="adv">'
+                     f'{nr} recorded run trace{"s" if nr != 1 else ""} &mdash; '
+                     "pipeline links in Advanced &rarr;</button>")
     return (
         f'<section class="hero card {_VCLASS[verdict]} scoped" data-p="{int(i)}">'
         f'<div class="herotop">'
@@ -916,7 +943,7 @@ def _hero(p: dict[str, Any], i: int) -> str:
         f'<p class="hsub">{_esc(subs[verdict])}</p>'
         f'<div class="hchips">{chip}</div></div>'
         f"{cert_html}</div>"
-        f"{_fact_tiles(p)}{fix_html}</section>"
+        f"{_fact_tiles(p)}{fix_html}{runs_link}</section>"
     )
 
 
@@ -1121,12 +1148,68 @@ def _card_certificate(p: dict[str, Any], i: int) -> str:
     return _sigcard(i, "cert", "certificate", summary, body)
 
 
+def _card_runs(p: dict[str, Any], i: int) -> str:
+    """Discovered run traces (<project>/.forge/runs/*.jsonl) with links to their
+    rendered pipeline pages. NEVER fabricates a run: no traces -> honest empty
+    state; "runs" key absent (plain forge_status JSON, discovery never ran) ->
+    says so instead of claiming zero."""
+    runs = p.get("runs")
+    if runs is None:
+        body = ('<div class="note">Run discovery was not performed for this render '
+                "(plain forge_status JSON carries no runs list). Generate the "
+                "dashboard with status/forge_dashboard.py to list real recorded "
+                "traces.</div>")
+        return _sigcard(i, "runs", "runs",
+                        '<span class="dim">not discovered</span>', body)
+    if not runs:
+        body = ('<div class="norun">No governed runs yet &mdash; start one with '
+                "<code>/forge</code>. The pipeline view lights up here once a run "
+                "records a trace.</div>")
+        return _sigcard(i, "runs", "runs",
+                        '<span class="dim">none yet — real count</span>', body)
+    rows: list[str] = []
+    linked = 0
+    for r in runs:
+        outcome = str(r.get("outcome") or "")
+        if outcome == "escalated":
+            ocls, otext = "ro-esc", outcome
+        elif outcome:
+            ocls, otext = "ro-ok", outcome
+        else:
+            ocls, otext = "ro-dim", "no run_end"
+        href = str(r.get("href") or "")
+        if href:
+            linked += 1
+            link = f'<a class="runlink" href="{_esc(href)}">view pipeline &rarr;</a>'
+        else:
+            link = ('<span class="runlink dim">pipeline page not emitted '
+                    "(single-file output)</span>")
+        meta = " &middot; ".join(
+            _esc(b) for b in (str(r.get("started") or ""),
+                              f"{int(r.get('events', 0))} events") if b)
+        rows.append(
+            '<div class="runrow">'
+            f'<span class="runout {ocls}">{_esc(otext)}</span>'
+            f'<span class="runtask">{_esc(r.get("task") or "(untitled run)")}</span>'
+            f'<span class="runid">{_esc(r.get("run_id") or "?")}</span>'
+            f'<span class="runmeta">{meta}</span>'
+            f"{link}</div>"
+        )
+    note = ('<div class="note">Each row is a real trace file at '
+            "&lt;project&gt;/.forge/runs/*.jsonl, replayed event-by-event on its "
+            "pipeline page — nothing listed here is fabricated.</div>")
+    summary = (f"<span>{len(runs)} recorded trace(s)</span>"
+               + (f"<span>{linked} pipeline page(s) linked</span>" if linked else ""))
+    return _sigcard(i, "runs", "runs", summary, "".join(rows) + note)
+
+
 def _advanced_block(p: dict[str, Any], i: int) -> str:
     verdict = _verdict(p)
     glyph, _name, lvcls, _why = _level_meta(p.get("certificate"))
     cards = (
         _card_git(p, i) + _card_github(p, i) + _card_secrets(p, i) + _card_gates(p, i)
-        + _card_tests_deps(p, i) + _card_forge(p, i) + _card_certificate(p, i)
+        + _card_tests_deps(p, i) + _card_runs(p, i) + _card_forge(p, i)
+        + _card_certificate(p, i)
     )
     return (
         f'<div class="pblock scoped {_VCLASS[verdict]}" data-p="{int(i)}" '
