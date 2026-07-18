@@ -1,0 +1,16 @@
+{"ts": "2026-07-18T08:42:38+00:00", "run_id": "2026-07-18-084238-refund", "event": "run_start", "task": "Add refund endpoint", "triage": "MEDIUM", "git_ref": "HEAD"}
+{"ts": "2026-07-18T08:42:38+00:00", "run_id": "2026-07-18-084238-refund", "event": "stage", "stage": "TRIAGE", "status": "done", "agent": "anvil"}
+{"ts": "2026-07-18T08:42:38+00:00", "run_id": "2026-07-18-084238-refund", "event": "stage", "stage": "PLAN", "status": "done", "agent": "anvil", "approved_by": "human"}
+{"ts": "2026-07-18T08:42:38+00:00", "run_id": "2026-07-18-084238-refund", "event": "stage", "stage": "BUILD", "status": "enter", "agent": "smith"}
+{"ts": "2026-07-18T08:42:38+00:00", "run_id": "2026-07-18-084238-refund", "event": "tool", "name": "edit", "target": "refund.py"}
+{"ts": "2026-07-18T08:42:38+00:00", "run_id": "2026-07-18-084238-refund", "event": "tool", "name": "pytest", "result": "1 failed: authz"}
+{"ts": "2026-07-18T08:42:38+00:00", "run_id": "2026-07-18-084238-refund", "event": "stage", "stage": "REVIEW", "status": "enter", "agent": "quench"}
+{"ts": "2026-07-18T08:42:38+00:00", "run_id": "2026-07-18-084238-refund", "event": "blocker", "blocker_id": "authz-missing", "count": 1}
+{"ts": "2026-07-18T08:42:38+00:00", "run_id": "2026-07-18-084238-refund", "event": "stage", "stage": "BUILD", "status": "enter", "agent": "smith", "retry": 1}
+{"ts": "2026-07-18T08:42:38+00:00", "run_id": "2026-07-18-084238-refund", "event": "tool", "name": "edit", "target": "refund.py"}
+{"ts": "2026-07-18T08:42:38+00:00", "run_id": "2026-07-18-084238-refund", "event": "blocker", "blocker_id": "authz-missing", "count": 2}
+{"ts": "2026-07-18T08:42:38+00:00", "run_id": "2026-07-18-084238-refund", "event": "stage", "stage": "BUILD", "status": "enter", "agent": "smith", "retry": 2}
+{"ts": "2026-07-18T08:42:38+00:00", "run_id": "2026-07-18-084238-refund", "event": "blocker", "blocker_id": "authz-missing", "count": 3}
+{"ts": "2026-07-18T08:42:38+00:00", "run_id": "2026-07-18-084238-refund", "event": "loop_cap", "blocker": "authz-missing", "count": 3, "attribution": "CONTEXT"}
+{"ts": "2026-07-18T08:42:38+00:00", "run_id": "2026-07-18-084238-refund", "event": "escalate", "to": "human", "reason": "same blocker 3x; recommend stronger engine"}
+{"ts": "2026-07-18T08:42:38+00:00", "run_id": "2026-07-18-084238-refund", "event": "run_end", "outcome": "escalated", "iterations": 3, "tool_calls": 9}
