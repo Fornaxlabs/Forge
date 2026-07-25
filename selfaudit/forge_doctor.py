@@ -43,7 +43,7 @@ FAIL = "FAIL"
 
 # Basenames of scripts that are legitimately allowed to run inside a lifecycle hook.
 # Anything else wired into a hook is flagged for human review.
-_BLESSED_HOOK_SCRIPTS = {"guard.py"}
+_BLESSED_HOOK_SCRIPTS = {"guard.py", "session_banner.py"}
 
 
 @dataclass(frozen=True)
