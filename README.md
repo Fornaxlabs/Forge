@@ -1,106 +1,143 @@
-# FORGE v4 — Fornax Orchestrated Review & Governance Engine
+# Forge — Governance & Security Guardrails for AI Coding Agents
 
-A governance harness delivered as a Claude Code plugin. It turns "just vibe-code
-it" into a disciplined pipeline: **triage → plan → build → adversarial review →
-loop discipline → shared memory → traces → evals**.
+**Your AI coding agent will run `rm -rf /` if you let it. Forge doesn't let it.**
 
-Foundations: Anthropic's CLAUDE.md/agentic-coding best practices, OWASP Top 10
-(2025), OWASP ASVS 5.0, OWASP API Security Top 10, OWASP Top 10 for LLM
-Applications, NIST SSDF (SP 800-218), Conventional Commits, RFC 9457.
+Forge is an open-source **AI coding governance harness** that puts a deterministic
+enforcement floor under AI coding agents — Claude Code, Codex, Cursor, Gemini CLI,
+Cline, Kiro and more. It **blocks destructive commands, stops runaway agent loops,
+prevents out-of-scope edits, catches committed secrets, and refuses to let a task be
+called "done" without proof it was verified.**
 
-## Status & honest scope (read this first)
+Not suggestions. Not a prompt that asks the model nicely. **Hooks that return exit 2
+and stop the tool call.**
 
-**Early tool. Tested, not battle-proven.** Forge works and has real tests, but it
-has NOT been proven in production or by a second user. Use it with that in mind.
+```bash
+git clone https://github.com/Mx4flav0r/Forge.git ~/Forge && bash ~/Forge/install.sh
+```
 
-**What it is:** a hard floor that blocks disasters (committed secrets, destructive
-commands, failing lint/test/CVE gates) + adversarial review against *your*
-standards + an eval loop that turns each escaped bug into a regression test. It
-makes practices you already believe in impossible to skip.
+The installer verifies the enforcement actually works before it claims success.
 
-**What it is NOT:** it does not design your app, pick your stack, plan for you, or
-turn a non-expert into an engineer. The command-deny guard is a *footgun-catcher,
-not a security boundary* against a determined adversary — a denylist can't be
-complete.
+---
 
-**Who it's for:** capable builders who want their own discipline enforced.
-Python/FastAPI-flavored today. Not a hand-holder for beginners.
+## Why this exists
 
-## The pieces
-- **Agent** — one `reviewer` that wears three hats (plan / build / adversarial
-  review) and can veto. Escalate to a fresh, independent reviewer for high-risk
-  self-authored diffs. Least privilege by design.
-- **Commands** — `/forge` (pipeline), `/forge-init` (bootstrap a project),
-  `/forge-comply` (read-only compliance audit of an existing app), `/forge-doctor`
-  (self-audit the enforcement layer), `/temper` (run evals + scorecard),
-  `/curate` (monthly hygiene), `/postmortem` (incident → rule).
-- **Self-audit (the tool governs itself)** — `selfaudit/forge_doctor.py` verifies
-  FORGE's own enforcement layer hasn't been silently weakened. It resolves the guard
-  **actually wired to the blocking PreToolUse event** (from `hooks.json`, not a fixed
-  path) and behaviour-tests it: 10 catastrophic commands must block, safe ones must
-  pass, the tool-call ceiling must actually trip, no hook may resolve to a non-blessed
-  script (a `curl …/guard.py | sh` is caught by path, not substring), secret gates
-  must reference gitleaks on an *uncommented* line, and plan-mode-first is verified by
-  running forge-init. Behaviour, not file-hashes. Fails CLOSED, exits non-zero on
-  tamper. Catches six known tamper classes (each regression-tested); not a proof of
-  total integrity.
-- **Pre-push gate (HARD)** — a git `pre-push` hook (installed by `/forge-init`)
-  blocks any push that would leak a secret. Enforced by git, not by a soft
-  CLAUDE.md rule — works even outside Claude Code.
-- **Layer 0 (deterministic, enforced)** — `hooks/guard.py` blocks catastrophic Bash,
-  enforces the tool-call ceiling + loop cap for an active run (real code, not a rule),
-  AND enforces plan scope — the **assumption guard**: a file edit outside the run's
-  declared scope is blocked (silent scope-creep is an unconfirmed assumption). Its
-  companion is a **definition-of-done gate** (`traces/forge_trace.py end`): a run can't
-  close as success without a logged verification event — "done" must be checked, not
-  assumed. Both are opt-in per run and fail open. pre-commit runs gitleaks + ruff +
-  mypy; CI runs lint/test/security/SBOM. Ship `templates/.gitleaks.toml` so accepted
-  keys don't train you to `--no-verify`.
-- **Shared memory** — `memory/forge_memory.py` (SQLite + FTS5), untrusted-data by rule.
-- **Traces** — `traces/forge_trace.py` writes one JSONL per run (run_start → … →
-  run_end) and drives the ceiling. No evidence = didn't happen.
-- **Evals** — 10 planted-fault tasks + a scorecard to catch harness regressions.
+AI coding tool adoption is at ~84% — and developer *trust* in the output is at an
+all-time low. Teams now spend **more time reviewing AI-generated code than writing
+code**, and studies keep finding a large share of AI-generated code ships avoidable
+security flaws. The developers getting real value aren't the ones who trust AI most —
+they're the ones with **systematic review built into the workflow**.
+
+Forge is that workflow, enforced — so it can't be skipped on the day you're tired.
+
+### The uncomfortable part: most "guardrails" don't guard
+
+"Enforcement" hooks are easy to get wrong. Reading the source of one of the most-starred
+Claude Code toolkits on GitHub, its two "blocking" hooks print `BLOCKED` and then call
+`process.exit(1)`. Per Claude Code's
+[hook documentation](https://code.claude.com/docs/en/hooks.md), **only exit code 2
+blocks a tool call** — exit 1 is a *non-blocking* error and the action proceeds:
+
+> "Claude Code treats exit code 1 as a non-blocking error and proceeds with the action…
+> If your hook is meant to enforce a policy, use `exit 2`."
+
+A guardrail that says "blocked" while the command runs is worse than none — it buys
+false confidence. **Forge exits 2, and ships a self-audit that proves it still does.**
+
+## What Forge enforces
+
+| Control | What it stops | Enforced by |
+|---|---|---|
+| **Destructive-command deny** | `rm -rf /`, force-push, `DROP TABLE`, `mkfs`, fork bombs | PreToolUse hook, exit 2 |
+| **Tool-call ceiling** | runaway agents burning tokens in a loop | run-wide counter, all subagents |
+| **Loop cap** | the same blocker "fixed" over and over | trace-driven, escalates to a human |
+| **Scope guard** | edits to files the plan never declared | hook blocks the write |
+| **Definition-of-done gate** | closing a task "done" with no verification | run cannot close without evidence |
+| **Secret gates** | credentials reaching your remote | git pre-commit + pre-push (works outside the agent) |
+| **Self-audit** | *the guardrails being quietly weakened* | `forge-doctor`, 9 tamper classes |
+
+Plus a governed pipeline — **triage → plan → human approval → build → adversarial
+review → verify** — with a JSONL trace of every run.
+
+## Compliance-ready audit trail
+
+Every governed run is recorded, and `forge_audit.py` exports it as evidence: who
+approved what, at which risk tier, what scope was declared, and whether it was verified
+before closing.
+
+```bash
+python3 status/forge_audit.py . --out audit.md     # or --json
+```
+
+That's the lineage-backed, human-oversight record that **EU AI Act** readiness and
+**ISO 42001** programs ask for — generated from what actually happened, not a
+questionnaire.
+
+## Quick start
+
+```bash
+bash install.sh          # installs + self-verifies
+source ~/.zshrc          # required: load the launcher (or open a new terminal)
+cd /your/project
+claude forge             # governed session: plugin + plan-mode
+```
+Inside the session:
+```
+/forge:forge-init        # stamp gates into this project
+/forge:forge-doctor      # confirm it's actually armed  ← never skip this
+/forge  add rate limiting to the login route
+```
+
+Full guide: **[QUICKSTART.md](QUICKSTART.md)**
+
+## Prove it yourself — don't take our word
+
+Forge's rule is that no claim ships without a reproducible proof:
+
+```bash
+python3 evals/prove_guard.py        # 24/24 catastrophic blocked, 0 false positives
+python3 selfaudit/forge_doctor.py   # verdict: OK — enforcement layer intact
+python3 -m pytest -q                # 307 tests
+```
+
+- **[PROOF.md](PROOF.md)** — every claim, with the command that reproduces it
+- **[docs/ENFORCEMENT-TEST-PLAN.md](docs/ENFORCEMENT-TEST-PLAN.md)** — verify each
+  control blocks, safely, on your own machine
+
+## Honest limits (please read)
+
+- **The denylist is a footgun-catcher, not a security boundary.** It stops honest
+  mistakes and runaway loops — not a determined adversary. It catches 0/6 deliberately
+  obfuscated commands, and we publish that number. Real protection is least privilege
+  + human approval + not executing untrusted input.
+- **Forge does not design your software.** It enforces *your* standards. Ambiguous
+  task → it asks; it does not guess.
+- **Early project.** Tested, self-auditing, and used on real work — but young, and
+  Python/Claude-Code-flavoured today. Other harnesses are wired to their documented
+  hook contracts and are marked experimental until validated live.
+- **Traces are self-reported by each run** — they evidence governed discipline;
+  enforcement integrity is attested separately by the self-audit.
 
 ## Multi-harness
 
-The guard is harness-neutral: one decision core (`hooks/guard.py` — deny-list,
-tool-call ceiling, loop cap) that reads any documented pre-tool payload shape
-and speaks two block signals (exit-2 + stderr, or deny-JSON via `--mode json` /
-`FORGE_BLOCK_MODE=json`). Thin install configs in `adapters/` wire that same
-file into Codex CLI, Block Goose, AWS Kiro, Gemini CLI (`BeforeTool`), Kimi
-Code, grok-build, and Cline; `scripts/forge-init.sh --harness <name>` stamps
-the right one into a project (default `claude`, unchanged).
+One harness-neutral decision core (`hooks/guard.py`) speaks both documented block
+signals — exit-2 + stderr, or deny-JSON (`FORGE_BLOCK_MODE=json`) — with thin install
+configs in `adapters/` for Codex CLI, Gemini CLI, Cline, Kiro, Goose, Kimi and
+grok-build. Validation status per harness: **[docs/HARNESSES.md](docs/HARNESSES.md)**.
 
-**Honesty first:** only the Claude Code path is validated end-to-end. Every
-other adapter is built to that harness's documented hook contract and NOT yet
-proven on the live harness. OpenCode and Copilot have documented
-subagent/MCP bypass gaps; Aider has no pre-tool hook at all (git/CI floor
-only). Full matrix with citations: [docs/HARNESSES.md](docs/HARNESSES.md).
+## Contributing
 
-## Install into a target project
-0. Start version control: `git init` and create a PRIVATE GitHub repo before real
-   work — `gh repo create <name> --private --source . --push`. FORGE assumes a git
-   remote exists (PRs, branch protection, CI all build on it).
-1. Install the plugin and restart the session (agents load at startup).
-   - Dev/local (no config change): launch Claude Code with
-     `claude --plugin-dir /path/to/forge`.
-   - Persistent: in a Claude Code session run `/plugin marketplace add /path/to/forge`,
-     then `/plugin` and enable `forge@fornaxlabs`; restart. (A local `marketplace.json`
-     lives at `.claude-plugin/marketplace.json`.)
-2. From the project root, run **`/forge-init`** (or `bash "$CLAUDE_PLUGIN_ROOT/scripts/forge-init.sh"`).
-   It stamps `CLAUDE.md`, `.pre-commit-config.yaml`, `.gitleaks.toml`, a CI
-   workflow, `.forge/memory.db`, the `pre-push` gate, and sets
-   `permissions.defaultMode=plan` in `.claude/settings.json` (plan-mode-first,
-   enforced) — all idempotent, never overwriting an existing file.
-3. Then the manual follow-ups it prints: `pre-commit install`; fill the `[…]`
-   placeholders in `CLAUDE.md`; enable branch protection on `main` (PR required,
-   no force-push).
-4. Baseline: run `/temper` and commit the first scorecard.
+Issues and PRs welcome — especially real-world false positives from the guard, and
+adapter validation on harnesses other than Claude Code. Forge runs its own gates in CI
+(`ruff`, `mypy --strict`, `pytest`, gitleaks, guard-proof, self-audit); PRs must be
+green.
 
-## Notes / deviations from the v4 spec
-- Manifest lives at `.claude-plugin/plugin.json` (Claude Code requirement), not the
-  repo root; `author` is an object.
-- Pre-commit revs pinned to current stable: gitleaks v8.30.1, ruff v0.15.20,
-  mypy v2.1.0.
-- `commands/` are supported; Claude Code's newer convention is `skills/`. Kept as
-  commands to match the spec.
+## License
+
+Apache-2.0 — see [LICENSE](LICENSE).
+
+---
+
+<sub>**Keywords:** AI coding agent governance · AI code security guardrails · Claude
+Code hooks · AI agent guardrails · LLM code review enforcement · AI coding compliance ·
+EU AI Act AI code audit trail · ISO 42001 AI governance · prevent destructive commands
+AI agent · agentic coding safety · AI code quality gates</sub>
