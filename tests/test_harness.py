@@ -52,7 +52,9 @@ _PLUGIN_ROOT = str(Path(__file__).resolve().parent.parent)
      {"command": "ls", "tool_name": "", "agent_id": "sub-2"}),
 ])
 def test_extract_known_shapes(payload, expect):
-    assert guard._extract(payload) == expect
+    got = guard._extract(payload)
+    # compare on the keys each case declares (extract also returns file_path, tested below)
+    assert {k: got[k] for k in expect} == expect
 
 
 @pytest.mark.parametrize("payload", [
@@ -69,6 +71,17 @@ def test_extract_degrades_to_empty(payload):
 def test_extract_nested_container_wins_over_bare_command():
     got = guard._extract({"tool_input": {"command": "inner"}, "command": "outer"})
     assert got["command"] == "inner"
+
+
+@pytest.mark.parametrize("payload,expected", [
+    ({"tool_input": {"file_path": "hooks/guard.py"}}, "hooks/guard.py"),
+    ({"toolInput": {"filePath": "a/b.py"}}, "a/b.py"),
+    ({"params": {"path": "c.py"}}, "c.py"),
+    ({"tool_input": {"notebook_path": "nb.ipynb"}}, "nb.ipynb"),
+    ({"tool_input": {"command": "ls"}}, ""),   # no file target
+])
+def test_extract_reads_file_path_across_harnesses(payload, expected):
+    assert guard._extract(payload)["file_path"] == expected
 
 
 # --- exit-2 mode (default): the Claude Code contract, for every shape -------

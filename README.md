@@ -47,11 +47,15 @@ Python/FastAPI-flavored today. Not a hand-holder for beginners.
 - **Pre-push gate (HARD)** — a git `pre-push` hook (installed by `/forge-init`)
   blocks any push that would leak a secret. Enforced by git, not by a soft
   CLAUDE.md rule — works even outside Claude Code.
-- **Layer 0 (deterministic, enforced)** — `hooks/guard.py` blocks catastrophic Bash
-  AND enforces the tool-call ceiling for an active run (the "noodrem" is real code,
-  not just a rule); pre-commit runs gitleaks + ruff + mypy; CI runs
-  lint/test/security/SBOM. Ship `templates/.gitleaks.toml` so accepted keys don't
-  train you to `--no-verify`.
+- **Layer 0 (deterministic, enforced)** — `hooks/guard.py` blocks catastrophic Bash,
+  enforces the tool-call ceiling + loop cap for an active run (real code, not a rule),
+  AND enforces plan scope — the **assumption guard**: a file edit outside the run's
+  declared scope is blocked (silent scope-creep is an unconfirmed assumption). Its
+  companion is a **definition-of-done gate** (`traces/forge_trace.py end`): a run can't
+  close as success without a logged verification event — "done" must be checked, not
+  assumed. Both are opt-in per run and fail open. pre-commit runs gitleaks + ruff +
+  mypy; CI runs lint/test/security/SBOM. Ship `templates/.gitleaks.toml` so accepted
+  keys don't train you to `--no-verify`.
 - **Shared memory** — `memory/forge_memory.py` (SQLite + FTS5), untrusted-data by rule.
 - **Traces** — `traces/forge_trace.py` writes one JSONL per run (run_start → … →
   run_end) and drives the ceiling. No evidence = didn't happen.

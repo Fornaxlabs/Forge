@@ -121,6 +121,17 @@ bash scripts/forge-comply.sh
   different dirs didn't share state), not subagent bypass — now fixed. Bound: only tool
   calls that fire the hook are counted (mutating tools, not reads); Claude Code's
   200-subagent/session cap backstops fan-out.
+- **The assumption guard binds on scope + done, not on intent.** Two deterministic
+  slices are enforced and tested: (a) a file edit outside the run's *declared* scope
+  is blocked by `hooks/guard.py` (`test_guard.py::test_scope_*`), and (b) a run can't
+  close as success without a logged verification event (`test_forge_trace.py::
+  test_end_success_*`). These stop the two most common silent assumptions — untracked
+  scope-creep and "I assume it works". What a hook CANNOT do is read intent: an
+  unstated *requirement* or a wrong *interpretation* is caught only by the plan stating
+  assumptions + the reviewer vetoing unverified claims (process, not a hook). The gates
+  are also opt-in — a run that declares no scope, or logs a fake verify event, isn't
+  stopped. Like the denylist, they raise the floor and make skipping visible; they are
+  not a proof no assumption was made.
 - **Multi-agent is Claude-Code-only today.** The Codex adapter (the portability
   claim) is designed in `docs/MULTI-HARNESS-ANALYSIS.md` but not yet built. Until it
   ships, "portable across agents" is a roadmap item, not a fact.

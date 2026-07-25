@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """FORGE PreToolUse guard.
 
-Three enforced controls that used to be mere prose in CLAUDE.md:
+Four enforced controls that used to be mere prose in CLAUDE.md:
 1. Deny destructive Bash commands (rm -rf /, force-push, drop table, ...).
 2. Enforce the run tool-call ceiling — counts MUTATING actions (Bash/Edit/Write/
    MultiEdit/NotebookEdit; see hooks.json matcher), not reads, and only while a
    FORGE run is active, so it never blocks unrelated sessions.
 3. Enforce the loop cap (same blocker exceeded its iteration limit → block + escalate).
+4. Enforce plan scope — the ASSUMPTION GUARD: block a file edit whose target is
+   outside the run's declared scope (see scope_violation). Touching an undeclared
+   file is an unconfirmed scope assumption; opt-in per run, fails open when no scope
+   was declared. This is the deterministic slice of "Forge doesn't allow assumptions";
+   intent/requirement assumptions are surfaced by the plan + caught by the reviewer,
+   which a hook cannot do.
 
 Exit 2 blocks the tool call. The guard fails OPEN: any internal error returns 0
 (allow), so a bug here can never wedge the user's shell. It only ever blocks on a
@@ -46,6 +52,7 @@ of the decision logic.
 from __future__ import annotations
 
 import fcntl
+import fnmatch
 import json
 import os
 import re
@@ -225,6 +232,90 @@ def iteration_breached(now: float | None = None) -> bool:
         return False
 
 
+def _run_scope(now: float | None = None) -> list[str] | None:
+    """The active run's declared scope globs, or None if the run declared none.
+
+    None means 'no scope enforcement' (the assumption guard is opt-in per run): a run
+    that never declared what files it would touch is not second-guessed. An empty list
+    is treated the same as None. No/stale/corrupt active run → None. Same fail-open
+    contract as the ceiling — an error here can never wedge the shell."""
+    path = _active_run_path()
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path) as fh:
+            try:
+                fcntl.flock(fh, fcntl.LOCK_SH)
+            except OSError:
+                pass
+            run = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(run, dict):
+        return None
+    started = run.get("started_at", 0)
+    now = time.time() if now is None else now
+    if not started or (now - started) > STALE_SECONDS:
+        return None
+    scope = run.get("scope")
+    if not isinstance(scope, list):
+        return None
+    globs = [s for s in scope if isinstance(s, str) and s.strip()]
+    return globs or None
+
+
+def _path_matches(candidate: str, pattern: str) -> bool:
+    """True if `candidate` is covered by scope `pattern`. fnmatch's '*' spans '/',
+    so `hooks/*` already covers `hooks/a/b.py`; the extra `pattern/*` form lets a
+    bare directory name ('hooks') cover files beneath it."""
+    pat = pattern.strip()
+    if fnmatch.fnmatch(candidate, pat):
+        return True
+    return fnmatch.fnmatch(candidate, pat.rstrip("/") + "/*")
+
+
+def _in_scope(file_path: str, globs: list[str], project_dir: str | None) -> bool:
+    """Is `file_path` inside the declared scope? Tried permissively — as given, as a
+    path relative to the project dir, and as a basename — because a false 'out of
+    scope' block would wedge a legitimate edit. Blocking is reserved for a path that
+    matches NONE of these forms against ANY declared glob."""
+    candidates = {file_path, os.path.normpath(file_path)}
+    if project_dir and os.path.isabs(file_path):
+        try:
+            candidates.add(os.path.relpath(file_path, project_dir))
+        except ValueError:
+            pass
+    candidates.add(os.path.basename(file_path))
+    return any(
+        _path_matches(cand, pat) for pat in globs for cand in candidates
+    )
+
+
+def scope_violation(tool_name: str, file_path: str, now: float | None = None) -> str | None:
+    """The assumption guard (deterministic slice): block a file-mutating tool whose
+    target is OUTSIDE the run's declared scope. Touching a file the plan never said it
+    would touch is an unconfirmed scope assumption — exactly the silent scope-creep
+    that 'no assumptions' must stop. Returns a deny reason, or None to allow.
+
+    Fails open everywhere ambiguity exists: no declared scope, non-file tool, missing
+    file_path, stale/corrupt run → None. It only ever blocks a concrete out-of-scope
+    file edit under an active run that DID declare a scope."""
+    if tool_name not in _FILE_MUTATING_TOOLS:
+        return None
+    if not file_path:
+        return None
+    globs = _run_scope(now)
+    if not globs:
+        return None
+    if _in_scope(file_path, globs, os.environ.get("CLAUDE_PROJECT_DIR")):
+        return None
+    return (
+        f"FORGE guard: out-of-scope edit — {file_path} is not in the run's declared "
+        "scope; the plan did not say it would touch this. Don't assume — widen the "
+        "scope on purpose (forge_trace scope --add <glob>) or re-plan the task."
+    )
+
+
 # --- harness adapter boundary ------------------------------------------------
 # The decision core above is harness-neutral; only the two functions below know
 # that harnesses differ. Payload-shape and block-signal knowledge stops here.
@@ -236,19 +327,32 @@ def iteration_breached(now: float | None = None) -> bool:
 _INPUT_KEYS = ("tool_input", "toolInput", "params", "arguments")
 _TOOL_NAME_KEYS = ("tool_name", "toolName", "tool")
 _AGENT_ID_KEYS = ("agent_id", "agentId", "agent")
+# Where a file-mutating tool names its target across harnesses.
+_FILE_PATH_KEYS = ("file_path", "filePath", "path", "notebook_path", "notebookPath")
+
+# Tools whose file target the scope guard governs. Bash is deliberately excluded:
+# a shell command has no single declared file target, so scope can't be judged from
+# it without false positives — the deny-list + ceiling cover Bash instead.
+_FILE_MUTATING_TOOLS = frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit"})
 
 
 def _extract(payload: dict[str, Any]) -> dict[str, str]:
     """Normalize a PreToolUse-style payload from ANY known harness into
-    {command, tool_name, agent_id}. Missing/foreign fields -> "" — never raise;
-    an unrecognized shape must degrade to "no command seen", not a crash
+    {command, tool_name, agent_id, file_path}. Missing/foreign fields -> "" — never
+    raise; an unrecognized shape must degrade to "nothing seen", not a crash
     (the fail-open contract extends to parsing)."""
     command = ""
+    file_path = ""
     for key in _INPUT_KEYS:
         inner = payload.get(key)
-        if isinstance(inner, dict) and isinstance(inner.get("command"), str):
-            command = inner["command"]
-            break
+        if isinstance(inner, dict):
+            if not command and isinstance(inner.get("command"), str):
+                command = inner["command"]
+            if not file_path:
+                for fk in _FILE_PATH_KEYS:
+                    if isinstance(inner.get(fk), str):
+                        file_path = inner[fk]
+                        break
     if not command and isinstance(payload.get("command"), str):
         command = payload["command"]
     tool_name = ""
@@ -263,7 +367,10 @@ def _extract(payload: dict[str, Any]) -> dict[str, str]:
         if isinstance(val, str):
             agent_id = val
             break
-    return {"command": command, "tool_name": tool_name, "agent_id": agent_id}
+    return {
+        "command": command, "tool_name": tool_name,
+        "agent_id": agent_id, "file_path": file_path,
+    }
 
 
 def evaluate(payload: dict[str, Any]) -> str | None:
@@ -271,7 +378,8 @@ def evaluate(payload: dict[str, Any]) -> str | None:
     Same checks, same order, same messages as the guard has always enforced
     (deny-list -> loop cap -> ceiling tick). Ticks the run counter as a side
     effect, exactly as before."""
-    command = _extract(payload)["command"]
+    fields = _extract(payload)
+    command = fields["command"]
     if command and is_denied(command):
         return "FORGE guard: destructive command blocked"
     if iteration_breached():
@@ -279,6 +387,9 @@ def evaluate(payload: dict[str, Any]) -> str | None:
             "FORGE guard: loop cap — the same blocker exceeded the iteration limit; "
             "attribute (PLAN|CONTEXT|TOOL|CAPABILITY) and escalate to a human"
         )
+    scope_reason = scope_violation(fields["tool_name"], fields["file_path"])
+    if scope_reason is not None:
+        return scope_reason
     if tick_and_check():
         return "FORGE guard: tool-call ceiling reached — run halted, escalate to a human"
     return None

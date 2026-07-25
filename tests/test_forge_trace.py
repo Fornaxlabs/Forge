@@ -83,3 +83,88 @@ def test_record_blocker_increments_and_enforces(tmp_path, monkeypatch):
     run = _j.loads((tmp_path / "active_run.json").read_text())
     assert run["blockers"] == {"authz": 2, "other": 1}
     assert run["iterations"] == 3
+
+
+# --- 2026-07-20: scope declaration (assumption guard, build-time) ---
+
+def test_start_persists_scope(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", str(tmp_path))
+    ft.main(["start", "--task", "t", "--triage", "SMALL", "--git-ref", "r",
+             "--scope", "hooks/*, tests/test_guard.py"], now=T0)
+    active = json.loads((tmp_path / "active_run.json").read_text())
+    assert active["scope"] == ["hooks/*", "tests/test_guard.py"]
+    assert _lines(tmp_path)[0]["scope"] == ["hooks/*", "tests/test_guard.py"]
+
+
+def test_scope_add_widens_and_logs(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", str(tmp_path))
+    ft.main(["start", "--task", "t", "--triage", "SMALL", "--git-ref", "r",
+             "--scope", "hooks/*"], now=T0)
+    assert ft.main(["scope", "--add", "traces/*"], now=T0) == 0
+    active = json.loads((tmp_path / "active_run.json").read_text())
+    assert active["scope"] == ["hooks/*", "traces/*"]
+    assert _lines(tmp_path)[-1]["event"] == "scope"
+
+
+def test_scope_set_replaces(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", str(tmp_path))
+    ft.main(["start", "--task", "t", "--triage", "SMALL", "--git-ref", "r",
+             "--scope", "hooks/*"], now=T0)
+    ft.main(["scope", "--set", "docs/*"], now=T0)
+    assert json.loads((tmp_path / "active_run.json").read_text())["scope"] == ["docs/*"]
+
+
+def test_scope_add_dedupes(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", str(tmp_path))
+    ft.main(["start", "--task", "t", "--triage", "SMALL", "--git-ref", "r",
+             "--scope", "hooks/*"], now=T0)
+    ft.main(["scope", "--add", "hooks/*"], now=T0)
+    assert json.loads((tmp_path / "active_run.json").read_text())["scope"] == ["hooks/*"]
+
+
+# --- 2026-07-20: definition-of-done gate — success requires verification ---
+
+def test_end_success_without_verification_refused(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", str(tmp_path))
+    ft.main(["start", "--task", "t", "--triage", "SMALL", "--git-ref", "r"], now=T0)
+    # no verify/test/review event logged → cannot claim success
+    assert ft.main(["end", "--outcome", "done"], now=T0) == 1
+    assert (tmp_path / "active_run.json").exists()  # run NOT closed
+
+
+def test_end_success_with_verification_allowed(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", str(tmp_path))
+    ft.main(["start", "--task", "t", "--triage", "SMALL", "--git-ref", "r"], now=T0)
+    ft.main(["log", "--event", "verify", "--json", '{"passed": true}'], now=T0)
+    assert ft.main(["end", "--outcome", "done"], now=T0) == 0
+    assert not (tmp_path / "active_run.json").exists()
+
+
+def test_end_green_requires_verification(tmp_path, monkeypatch):
+    # Forge's own success word must be gated too
+    monkeypatch.setenv("FORGE_HOME", str(tmp_path))
+    ft.main(["start", "--task", "t", "--triage", "SMALL", "--git-ref", "r"], now=T0)
+    assert ft.main(["end", "--outcome", "green"], now=T0) == 1
+
+
+def test_end_failed_verify_event_does_not_count(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", str(tmp_path))
+    ft.main(["start", "--task", "t", "--triage", "SMALL", "--git-ref", "r"], now=T0)
+    ft.main(["log", "--event", "test", "--json", '{"passed": false}'], now=T0)
+    assert ft.main(["end", "--outcome", "success"], now=T0) == 1  # a failed check is not proof
+
+
+def test_end_non_success_outcome_not_gated(tmp_path, monkeypatch):
+    # 'escalated'/'abandoned' don't claim success → no verification required
+    monkeypatch.setenv("FORGE_HOME", str(tmp_path))
+    ft.main(["start", "--task", "t", "--triage", "SMALL", "--git-ref", "r"], now=T0)
+    assert ft.main(["end", "--outcome", "escalated"], now=T0) == 0
+
+
+def test_end_force_overrides_but_logs_assumption(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", str(tmp_path))
+    ft.main(["start", "--task", "t", "--triage", "SMALL", "--git-ref", "r"], now=T0)
+    assert ft.main(["end", "--outcome", "done", "--force", "--note", "hotfix"], now=T0) == 0
+    events = _lines(tmp_path)
+    assert any(e["event"] == "unverified_close" and e["note"] == "hotfix" for e in events)
+    assert events[-1]["event"] == "run_end"

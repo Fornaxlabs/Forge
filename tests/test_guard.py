@@ -210,3 +210,82 @@ def test_forge_home_resolution(monkeypatch, tmp_path):
     assert guard._forge_home() == str(tmp_path / ".forge")          # project anchor
     monkeypatch.setenv("FORGE_HOME", "/explicit")
     assert guard._forge_home() == "/explicit"                       # explicit wins
+
+
+# --- 2026-07-20: assumption guard — block edits outside the run's declared scope ---
+
+def _scoped_run(tmp_path, scope, age=0):
+    """Write an active run with a declared scope; return the FORGE_HOME to set."""
+    import time as _t
+    home = tmp_path / ".forge"
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "active_run.json").write_text(json.dumps({
+        "run_id": "r", "path": str(home / "runs" / "r.jsonl"),
+        "started_at": _t.time() - age, "tool_calls": 0, "ceiling": 40,
+        "scope": scope,
+    }))
+    return str(home)
+
+
+def test_extract_reads_file_path():
+    got = guard._extract({"tool_name": "Edit", "tool_input": {"file_path": "hooks/guard.py"}})
+    assert got["file_path"] == "hooks/guard.py"
+    assert got["tool_name"] == "Edit"
+
+
+def test_scope_blocks_out_of_scope_edit(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", _scoped_run(tmp_path, ["hooks/*"]))
+    payload = {"tool_name": "Edit", "tool_input": {"file_path": "secrets/prod.env"}}
+    assert guard.decide(payload) == 2
+
+
+def test_scope_allows_in_scope_edit(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", _scoped_run(tmp_path, ["hooks/*", "tests/test_guard.py"]))
+    assert guard.decide({"tool_name": "Edit", "tool_input": {"file_path": "hooks/guard.py"}}) == 0
+    assert guard.decide({"tool_name": "Write", "tool_input": {"file_path": "tests/test_guard.py"}}) == 0
+
+
+def test_scope_bare_dir_covers_children(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", _scoped_run(tmp_path, ["hooks"]))
+    assert guard.decide({"tool_name": "Edit", "tool_input": {"file_path": "hooks/guard.py"}}) == 0
+
+
+def test_scope_no_scope_declared_allows_anything(tmp_path, monkeypatch):
+    # opt-in: a run that declared no scope is never second-guessed (fail open)
+    monkeypatch.setenv("FORGE_HOME", _scoped_run(tmp_path, []))
+    assert guard.decide({"tool_name": "Edit", "tool_input": {"file_path": "anywhere/x.py"}}) == 0
+
+
+def test_scope_ignores_non_file_tool(tmp_path, monkeypatch):
+    # Bash has no single file target — scope guard must not touch it (deny-list does)
+    monkeypatch.setenv("FORGE_HOME", _scoped_run(tmp_path, ["hooks/*"]))
+    assert guard.decide({"tool_name": "Bash", "tool_input": {"command": "ls out-of/scope"}}) == 0
+
+
+def test_scope_stale_run_fails_open(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", _scoped_run(tmp_path, ["hooks/*"], age=7 * 3600))
+    assert guard.decide({"tool_name": "Edit", "tool_input": {"file_path": "elsewhere.py"}}) == 0
+
+
+def test_scope_absolute_path_normalized_to_project(tmp_path, monkeypatch):
+    home = _scoped_run(tmp_path, ["hooks/*"])
+    monkeypatch.setenv("FORGE_HOME", home)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    abs_in = str(tmp_path / "hooks" / "guard.py")
+    abs_out = str(tmp_path / "secrets" / "prod.env")
+    assert guard.decide({"tool_name": "Edit", "tool_input": {"file_path": abs_in}}) == 0
+    assert guard.decide({"tool_name": "Edit", "tool_input": {"file_path": abs_out}}) == 2
+
+
+def test_scope_out_of_scope_does_not_tick_ceiling(tmp_path, monkeypatch):
+    # a blocked out-of-scope edit must not consume a ceiling tick
+    monkeypatch.setenv("FORGE_HOME", _scoped_run(tmp_path, ["hooks/*"]))
+    guard.decide({"tool_name": "Edit", "tool_input": {"file_path": "nope.py"}})
+    active = json.loads((tmp_path / ".forge" / "active_run.json").read_text())
+    assert active["tool_calls"] == 0
+
+
+def test_scope_deny_list_wins_over_scope(tmp_path, monkeypatch):
+    # a destructive command is blocked regardless of scope (deny-list runs first)
+    monkeypatch.setenv("FORGE_HOME", _scoped_run(tmp_path, ["hooks/*"]))
+    assert guard.decide({"tool_name": "Bash", "tool_input": {"command": "rm -rf /"}}) == 2
