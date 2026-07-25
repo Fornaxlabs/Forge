@@ -60,6 +60,37 @@ def test_renders_all_projects_and_fleet() -> None:
     assert NOW in out  # collected-at stamp shown
 
 
+def test_audit_tab_present_and_honest_when_no_runs() -> None:
+    """The Audit tab must exist (the UI must tell the same story as forge_audit)
+    and must NOT invent evidence when a project has no governed runs."""
+    html = rd.render([_proj()], NOW)
+    assert 'id="tab-audit"' in html and 'id="panel-audit"' in html
+    assert "No governed runs recorded yet" in html
+
+
+def test_audit_tab_reports_real_run_evidence() -> None:
+    runs = [
+        {"task": "add auth", "triage": "LARGE", "human_approved": True,
+         "verified": True, "forced_close": False, "outcome": "green", "run_id": "r1"},
+        {"task": "hotfix", "triage": "SMALL", "human_approved": False,
+         "verified": False, "forced_close": True, "outcome": "green", "run_id": "r2"},
+    ]
+    html = rd.render([_proj(audit_runs=runs)], NOW)
+    assert "governance evidence (2 runs)" in html
+    assert "add auth" in html and "hotfix" in html
+    assert "FORCED" in html          # an unverified close is surfaced, never hidden
+    assert "forge_audit.py" in html  # points at the CLI export for auditors
+
+
+def test_audit_tab_escapes_run_fields() -> None:
+    runs = [{"task": '<img src=x onerror=alert(1)>', "triage": '"><b>',
+             "human_approved": True, "verified": True, "forced_close": False,
+             "outcome": "green", "run_id": "r"}]
+    html = rd.render([_proj(audit_runs=runs)], NOW)
+    assert "<img src=x" not in html
+    assert "&lt;img" in html
+
+
 def test_empty_input_is_honest() -> None:
     out = rd.render([], NOW)
     assert "no projects collected" in out

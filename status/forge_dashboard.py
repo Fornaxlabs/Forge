@@ -36,7 +36,8 @@ from typing import Any
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "traces"))
-import forge_certify  # noqa: E402  (sibling module in status/)
+import forge_audit  # noqa: E402  (sibling module in status/)
+import forge_certify  # noqa: E402
 import forge_status  # noqa: E402
 import render_dashboard  # noqa: E402
 import render_pipeline  # noqa: E402  (sibling package dir traces/)
@@ -136,6 +137,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"collecting {os.path.abspath(d)} ...", file=sys.stderr)
         proj = build_project(d)
         proj["runs"] = discover_runs(d)
+        # Governance evidence for the Audit tab — same source/definitions as the
+        # forge_audit CLI export, so the UI and the auditor's file always agree.
+        proj["audit_runs"] = [
+            {"task": r.task, "triage": r.triage, "human_approved": r.human_approved,
+             "verified": r.verified, "forced_close": r.forced_close,
+             "outcome": r.outcome, "run_id": r.run_id}
+            for r in forge_audit.collect(os.path.join(d, ".forge", "runs"))
+        ]
         projects.append(proj)
     if not projects:
         print("no valid project directories given", file=sys.stderr)

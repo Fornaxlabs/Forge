@@ -1230,6 +1230,53 @@ def _chip(flt: str, label: str, count: int, dot: str) -> str:
 # ---------------------------------------------------------------------------
 # Tab 3 — Configure (inspect + instruct; never pretends to save)
 # ---------------------------------------------------------------------------
+def _audit_block(p: dict[str, Any], i: int) -> str:
+    """Compliance evidence for one project — the governed-run record auditors ask for.
+    Mirrors status/forge_audit.py (same traces, same definitions) so the UI and the
+    CLI export can never tell different stories."""
+    runs = p.get("audit_runs") or []
+    proj = _esc(p["project"])
+    if not runs:
+        return (
+            f'<div class="cfgcard card" data-proj="{int(i)}">'
+            f'<div class="cfgh">{proj} — governance evidence</div>'
+            '<div class="note">No governed runs recorded yet. Evidence appears once a run '
+            "is traced (<code>/forge &lt;task&gt;</code>, or forge_trace start … end). "
+            "Nothing is inferred — an empty record stays empty.</div></div>"
+        )
+    total = len(runs)
+    approved = sum(1 for r in runs if r.get("human_approved"))
+    verified = sum(1 for r in runs if r.get("verified"))
+    forced = sum(1 for r in runs if r.get("forced_close"))
+    rows = []
+    for r in runs[:12]:
+        vmark = "verified" if r.get("verified") else ("FORCED" if r.get("forced_close") else "—")
+        rows.append(
+            '<div class="gate">'
+            f'<span class="ic" aria-hidden="true"></span>{_esc(str(r.get("task", ""))[:44])}'
+            f'<span class="st">{_esc(str(r.get("triage", "?")))} · '
+            f'{"approved" if r.get("human_approved") else "no-approval"} · {vmark}</span></div>'
+        )
+    return (
+        f'<div class="cfgcard card" data-proj="{int(i)}">'
+        f'<div class="cfgh">{proj} — governance evidence ({total} run'
+        f'{"s" if total != 1 else ""})</div>'
+        f'<div class="posture"><span class="pk">human-approved</span>'
+        f'<span class="vpill">{approved}/{total}</span></div>'
+        f'<div class="posture"><span class="pk">verified closes</span>'
+        f'<span class="vpill">{verified}/{total}</span></div>'
+        f'<div class="posture"><span class="pk">forced (unverified) closes</span>'
+        f'<span class="vpill">{forced}</span></div>'
+        + "".join(rows)
+        + '<div class="note">Each row traces to .forge/runs/&lt;run&gt;.jsonl. Export the '
+          "full report for an auditor with "
+          "<code>python3 status/forge_audit.py . --out audit.md</code> (add --json for a "
+          "machine-readable manifest). Traces are self-reported by each run: this evidences "
+          "governed discipline, not a tamper-proof ledger — enforcement integrity is attested "
+          "separately by forge_doctor.</div></div>"
+    )
+
+
 def _configure_block(p: dict[str, Any], i: int) -> str:
     enf = p["enforcement"]
     verdict = _verdict(p)
@@ -1331,6 +1378,8 @@ def render(projects: list[dict[str, Any]], collected_at: str) -> str:
         'aria-controls="panel-dash" aria-selected="true">Dashboard</button>'
         '<button type="button" class="tab" role="tab" id="tab-adv" '
         'aria-controls="panel-adv" aria-selected="false" tabindex="-1">Advanced</button>'
+        '<button type="button" class="tab" role="tab" id="tab-audit" '
+        'aria-controls="panel-audit" aria-selected="false" tabindex="-1">Audit</button>'
         '<button type="button" class="tab" role="tab" id="tab-cfg" '
         'aria-controls="panel-cfg" aria-selected="false" tabindex="-1">Configure</button></div>'
     )
@@ -1357,6 +1406,17 @@ def render(projects: list[dict[str, Any]], collected_at: str) -> str:
         '<div class="emptymsg" id="advEmpty" hidden>no projects match this filter</div></section>'
     )
 
+    audit_blocks = "".join(_audit_block(p, i) for i, p in enumerate(ordered))
+    audit_panel = (
+        '<section class="view" id="panel-audit" role="tabpanel" aria-labelledby="tab-audit" '
+        'tabindex="0"><h2 class="viewlabel">Audit</h2>'
+        '<div class="rulenote">Compliance evidence from real governed runs — who approved '
+        "what, at which risk tier, and whether it was verified before closing. This is the "
+        "lineage auditors ask for (EU AI Act human-oversight/auditability, ISO 42001). "
+        "Same source and definitions as <code>status/forge_audit.py</code>.</div>"
+        f"{audit_blocks}</section>"
+    )
+
     cfg_blocks = "".join(_configure_block(p, i) for i, p in enumerate(ordered))
     cfg_panel = (
         '<section class="view" id="panel-cfg" role="tabpanel" aria-labelledby="tab-cfg" '
@@ -1367,7 +1427,7 @@ def render(projects: list[dict[str, Any]], collected_at: str) -> str:
         f"{cfg_blocks}{_tester()}</section>"
     )
 
-    body = dash_panel + adv_panel + cfg_panel
+    body = dash_panel + adv_panel + audit_panel + cfg_panel
     if not ordered:
         body = '<div class="emptymsg">no projects collected</div>'
 
