@@ -81,6 +81,12 @@ source ~/.zshrc          # required: load the launcher (or open a new terminal)
 cd /your/project
 claude forge             # governed session: plugin + plan-mode
 ```
+
+`claude forge` is a **shell function the installer adds to your rc file** (not a native
+`claude` subcommand) — it launches Claude Code with Forge loaded and plan-mode on, and
+prints a `🔨 Forge` banner so you can see it took. Any other `claude …` is untouched.
+No banner means it didn't load: you skipped `source ~/.zshrc`, or ran `install.sh
+--no-cli`. Prefer the raw flags? `claude --plugin-dir ~/Forge --permission-mode plan`.
 Inside the session:
 ```
 /forge:forge-init        # stamp gates into this project
