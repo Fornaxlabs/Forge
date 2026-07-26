@@ -540,7 +540,9 @@ _JS = r"""
     [/\btruncate\s+table\b/, "TRUNCATE TABLE"],
     [/:\s*\(\s*\)\s*\{[\s\S]*\}\s*;\s*:/, "fork bomb"],
     [/>\s*\/dev\/sd[a-z]\d*/, "write to raw block device"],
-    [/\bfind\s+\/\s[\s\S]*-delete\b/, "find / ... -delete"]
+    [/\bfind\s+\/\s[\s\S]*-delete\b/, "find / ... -delete"],
+    [/\b(?:curl|wget)\b[^|;&]*\|\s*(?:sudo\s+)?(?:ba|z|k|da)?sh\b/, "curl|wget piped to a shell"],
+    [/\b(?:curl|wget)\b[^|;&]*\|\s*(?:sudo\s+)?(?:python3?|perl|ruby|node)\b/, "curl|wget piped to an interpreter"]
   ];
   function segDenied(seg) {
     if (/\brm\b/.test(seg)) {

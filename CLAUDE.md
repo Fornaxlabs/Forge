@@ -42,6 +42,17 @@ Forge does not let a run assume — it makes assuming visible and effortful:
   assumption as a BLOCKER.
 - **Ambiguity → ask, never guess.** If the task is under-specified, stop and ask the
   human; do not pick an interpretation and build on it.
+- **Progress is audited, not narrated.** Before reporting progress or completion,
+  audit every claim against an actual tool result from THIS run. Report only what you
+  can point to evidence for; if something is unverified, say so explicitly. If tests
+  fail, say so with the output; if a step was skipped, say that. An uncited progress
+  claim is a BLOCKER — the done-gate catches a run that closes without evidence, but
+  only this catches a run that *lies on the way there*. (Vendor testing found this
+  instruction nearly eliminates fabricated status reports on long autonomous runs.)
+- **Never end on a promise.** Do not end a turn with a statement of intent ("I'll now
+  run the tests", "let me fix that") and no corresponding tool call. Check your last
+  paragraph: if it describes work you have not done, do it now. End only when the task
+  is complete or you are blocked on input only the human can provide.
 Honest limit: the scope + done gates BIND (deterministic hooks); the cite-facts and
 ask-don't-guess rules are process the reviewer enforces — a hook can't read intent.
 

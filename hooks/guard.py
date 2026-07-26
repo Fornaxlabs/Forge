@@ -69,16 +69,45 @@ _STATIC_DENY = [
     r":\s*\(\s*\)\s*\{.*\}\s*;\s*:",   # fork bomb (tolerant of spaces)
     r">\s*/dev/sd[a-z]\d*",
     r"\bfind\s+/\s.*-delete\b",
+    # Pipe-to-shell: fetching a remote payload straight into an interpreter is
+    # arbitrary unreviewed code execution — the fetched script never touches disk and
+    # never passes this hook's own checks, so it can carry any blocked command one
+    # layer removed. Requires BOTH a fetch and a pipe into a shell, so ordinary
+    # `curl … > file` and `bash install.sh` stay allowed. (Gap found 2026-07-26.)
+    r"\b(?:curl|wget)\b[^|;&]*\|\s*(?:sudo\s+)?(?:ba|z|k|da)?sh\b",
+    r"\b(?:curl|wget)\b[^|;&]*\|\s*(?:sudo\s+)?(?:python3?|perl|ruby|node)\b",
 ]
 
 # Default ceiling; a run may override via active_run.json.
-DEFAULT_CEILING = 40
+def _env_int(name: str, fallback: int) -> int:
+    """Read a positive int from the environment; any garbage falls back safely.
+    Never raises — a bad env var must not wedge the guard."""
+    try:
+        v = int(os.environ.get(name, ""))
+        return v if v > 0 else fallback
+    except (TypeError, ValueError):
+        return fallback
+
+
+# Ceiling calibration (revised 2026-07-26). 40 was tuned for short, supervised runs.
+# Current long-horizon engines (Fable 5, Opus 5) sustain autonomous runs for HOURS and
+# routinely exceed 40 mutating actions on legitimate work — a ceiling that fires on
+# honest work trains users to disable it, which is how a guardrail dies. So the default
+# is env-tunable (FORGE_CEILING) and per-run overridable (`TRACE start --ceiling N`);
+# see docs/ENGINE-PROFILES.md for per-engine values. It remains a RUNAWAY backstop —
+# a number you should not reach — not a budget.
+DEFAULT_CEILING = _env_int("FORGE_CEILING", 40)
 # Loop discipline: max review iterations on the SAME blocker before a human must
 # take over. Enforced here (not just prose): once the reviewer has recorded a
 # blocker this many times (via `forge_trace blocker --id`), the next tool call in
 # the run is blocked. A run may override via active_run.json ("iteration_cap").
 DEFAULT_ITERATION_CAP = 3
-STALE_SECONDS = 6 * 3600  # ignore an active run older than this (crash safety)
+# Crash safety: ignore an active run older than this. Raised 6h -> 24h (2026-07-26)
+# because long-horizon engines run autonomously for hours and multiday runs are a
+# stated use case; at 6h a legitimate long run silently LOST its ceiling and loop cap
+# mid-flight — enforcement evaporating exactly when a run is most likely to go wrong.
+# Tunable via FORGE_STALE_HOURS for shorter/longer operating windows.
+STALE_SECONDS = _env_int("FORGE_STALE_HOURS", 24) * 3600
 
 
 # Shell separators — split a compound line into individual command invocations so
