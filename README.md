@@ -12,7 +12,7 @@ Not suggestions. Not a prompt that asks the model nicely. **Hooks that return ex
 and stop the tool call.**
 
 ```bash
-git clone https://github.com/Mx4flav0r/Forge.git ~/Forge && bash ~/Forge/install.sh
+git clone https://github.com/Fornaxlabs/Forge.git ~/Forge && bash ~/Forge/install.sh
 ```
 
 The installer verifies the enforcement actually works before it claims success.

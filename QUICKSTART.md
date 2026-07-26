@@ -9,7 +9,7 @@ This gets you from zero to a governed session.
 
 ## 1. Get Forge
 ```bash
-git clone https://github.com/Mx4flav0r/Forge.git ~/Forge   # or your fork/path
+git clone https://github.com/Fornaxlabs/Forge.git ~/Forge   # or your fork/path
 ```
 
 ## 2. Install the `claude forge` launcher (optional but recommended)

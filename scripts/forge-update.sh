@@ -106,5 +106,5 @@ fi
 printf '\n\033[31m✗ VERIFICATION FAILED — rolling back.\033[0m\n'
 git reset --hard "$BEFORE" --quiet
 ok "rolled back to ${BEFORE:0:8} (your previous, working enforcement)"
-printf '   Please report this at https://github.com/Mx4flav0r/Forge/issues\n\n'
+printf '   Please report this at https://github.com/Fornaxlabs/Forge/issues\n\n'
 exit 1
