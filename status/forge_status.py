@@ -85,7 +85,7 @@ def probe_github(d: str) -> dict[str, Any]:
     # — a green run elsewhere must not vouch for a broken HEAD.
     _, head = _run(["git", "rev-parse", "HEAD"], d)
     head = head.strip()
-    rc2, runs = _run(
+    _rc2, runs = _run(
         ["gh", "run", "list", "--limit", "20", "--json", "headSha,status,conclusion"], d, timeout=15
     )
     ci = "no run for HEAD"
@@ -113,7 +113,7 @@ _NOISE_RE = re.compile(
     r"data|datasets|fixtures|samples|coverage|\.mypy_cache|\.pytest_cache)/|"
     r"\.(min\.(js|css)|jpe?g|png|gif|webp|ico|svg|pdf|zip|gz|tar|mp4|mkv|mp3|"
     r"bin|so|dylib|rlib|rmeta|lock|map)$",
-    re.I,
+    re.IGNORECASE,
 )
 
 
@@ -244,7 +244,7 @@ def probe_deps(d: str) -> dict[str, Any]:
     if "No known vulnerabilities" in out or rc == 0:
         return {"manifest": manifest, "known_vulns": 0}
     import re
-    found = len(re.findall(r"^\S+\s+\S+\s+\S+", out, re.M))
+    found = len(re.findall(r"^\S+\s+\S+\s+\S+", out, re.MULTILINE))
     return {"manifest": manifest, "known_vulns": "see pip-audit" if found else "could not resolve"}
 
 

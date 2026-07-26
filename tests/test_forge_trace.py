@@ -5,7 +5,6 @@ import importlib.util
 import json
 from pathlib import Path
 
-
 _P = Path(__file__).resolve().parent.parent / "traces" / "forge_trace.py"
 _spec = importlib.util.spec_from_file_location("forge_trace", _P)
 assert _spec and _spec.loader

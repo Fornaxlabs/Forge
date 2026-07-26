@@ -78,7 +78,6 @@ _STATIC_DENY = [
     r"\b(?:curl|wget)\b[^|;&]*\|\s*(?:sudo\s+)?(?:python3?|perl|ruby|node)\b",
 ]
 
-# Default ceiling; a run may override via active_run.json.
 def _env_int(name: str, fallback: int) -> int:
     """Read a positive int from the environment; any garbage falls back safely.
     Never raises — a bad env var must not wedge the guard."""
@@ -150,7 +149,7 @@ def is_denied(command: str) -> bool:
         return True
     for pat in _extra_patterns():  # project-specific extensions
         try:
-            if re.search(pat, c, re.I):
+            if re.search(pat, c, re.IGNORECASE):
                 return True
         except re.error:
             continue  # a malformed project pattern must never wedge the guard

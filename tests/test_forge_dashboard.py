@@ -200,4 +200,4 @@ def test_build_project_merges_certificate(tmp_path: Path) -> None:
     cert = rec["certificate"]
     # all-green prebuilt status + 1 governed run -> the real certify logic says L3
     assert cert["level"] == "L3"
-    assert [c["name"] for c in cert["claims"]][0] == "enforcement-armed"
+    assert next(c["name"] for c in cert["claims"]) == "enforcement-armed"

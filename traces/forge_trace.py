@@ -145,7 +145,7 @@ def _load_active() -> dict[str, Any]:
 
 
 def log(event: str, extra: dict[str, Any], now: float) -> None:
-    if not isinstance(extra, dict):
+    if not isinstance(extra, dict):  # noqa: TRY004 — CLI contract: ValueError -> exit 1
         raise ValueError("--json payload must be a JSON object")
     active = _load_active()
     _append(active["path"], active["run_id"], event, extra, now)

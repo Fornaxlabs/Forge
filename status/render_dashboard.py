@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import html
 import json
+import pathlib
 import sys
 from typing import Any
 
@@ -1462,7 +1463,7 @@ def render(projects: list[dict[str, Any]], collected_at: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
-    raw = open(argv[0]).read() if argv else sys.stdin.read()
+    raw = pathlib.Path(argv[0]).read_text() if argv else sys.stdin.read()
     data = json.loads(raw)
     projects = data if isinstance(data, list) else [data]
     collected = str(projects[0].get("collected_at", "")) if projects else ""

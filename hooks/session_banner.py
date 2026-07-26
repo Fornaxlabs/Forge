@@ -46,7 +46,7 @@ def guard_wired(root: str) -> bool:
 def main() -> int:
     try:
         sys.stdin.read()  # drain the SessionStart payload; we don't need it
-    except Exception:  # noqa: BLE001 — a banner must never wedge startup
+    except Exception:  # noqa: BLE001,S110 — deliberate: a banner must never wedge startup
         pass
     try:
         if guard_wired(_root()):

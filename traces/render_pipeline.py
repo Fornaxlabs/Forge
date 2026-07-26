@@ -97,7 +97,7 @@ def _parse_ts(ev: dict[str, object]) -> datetime | None:
 
 
 def fmt_duration(seconds: float) -> str:
-    total = int(round(seconds))
+    total = round(seconds)
     if total <= 0:
         return "0s"
     minutes, secs = divmod(total, 60)

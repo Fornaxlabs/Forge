@@ -13,7 +13,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install ruff mypy pytest coverage
+      # Pinned deliberately: an unpinned linter means CI can break with NO code
+      # change (ruff 0.16 added rules that reddened a green tree). Forge's own
+      # ENGINEERING.md says pin dependencies — this is that rule applied to itself.
+      - run: pip install ruff==0.15.17 mypy==2.1.0 pytest coverage
       - name: lint
         run: ruff check .
       - name: types

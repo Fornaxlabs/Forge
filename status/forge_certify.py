@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import forge_status  # noqa: E402  (sibling module in status/)
+import forge_status
 
 _PLUGIN = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

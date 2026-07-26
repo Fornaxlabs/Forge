@@ -36,12 +36,11 @@ from typing import Any
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "traces"))
-import forge_audit  # noqa: E402  (sibling module in status/)
+import forge_audit  # noqa: E402  (sibling module in status/; needs sys.path above)
 import forge_certify  # noqa: E402
 import forge_status  # noqa: E402
 import render_dashboard  # noqa: E402
 import render_pipeline  # noqa: E402  (sibling package dir traces/)
-
 
 _UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
