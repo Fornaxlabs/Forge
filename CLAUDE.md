@@ -92,6 +92,18 @@ hooks/guard.py: subagent calls fire the same hook and share one counter anchored
 $CLAUDE_PROJECT_DIR/.forge, so the ceiling + loop cap span the whole fleet (verified
 2026-07-18 — a subagent call was blocked once the run-wide count crossed the ceiling).
 
+## Engines (roles are stable; the model beneath them is staffing)
+Prompt deltas are per-engine and sometimes OPPOSITE between models (Opus 4.8 is a
+literal follower that spawns few subagents; Opus 5 expands scope and delegates more).
+See @docs/ENGINE-PROFILES.md for the delta table + measurements. Two standing rules:
+- **Never** add "verify/double-check your work" for any engine — measured redundant on
+  Opus 4.8, Sonnet 5, Haiku 4.5 and Fable 5 (all four self-verified unprompted,
+  2026-07-26) and explicitly harmful on Opus 5. Verification is a GATE (`TRACE end`
+  refuses an unverified success), never a request.
+- Scope is a HOOK (out-of-scope edits are blocked), not a plea — so Forge stays correct
+  even on an engine that expands scope. Re-measure on each model release; if a vendor
+  page and a measurement disagree, the measurement wins.
+
 ## Commands
 Test: `pytest -q` · Lint: `ruff check . && mypy .` · Run: `uv run ...`
 
