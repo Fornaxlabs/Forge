@@ -47,7 +47,8 @@ false confidence. **Forge exits 2, and ships a self-audit that proves it still d
 
 | Control | What it stops | Enforced by |
 |---|---|---|
-| **Destructive-command deny** | `rm -rf /`, force-push, `DROP TABLE`, `mkfs`, fork bombs | PreToolUse hook, exit 2 |
+| **Destructive-command deny** | `rm -rf /`, force-push, `DROP TABLE`, `mkfs`, fork bombs, `curl … \| sh` | PreToolUse hook, exit 2 |
+| **Subagent fan-out cap** | a run quietly spawning an agent swarm | run-wide agent roster |
 | **Tool-call ceiling** | runaway agents burning tokens in a loop | run-wide counter, all subagents |
 | **Loop cap** | the same blocker "fixed" over and over | trace-driven, escalates to a human |
 | **Scope guard** | edits to files the plan never declared | hook blocks the write |
@@ -96,12 +97,37 @@ Forge's rule is that no claim ships without a reproducible proof:
 ```bash
 python3 evals/prove_guard.py        # 24/24 catastrophic blocked, 0 false positives
 python3 selfaudit/forge_doctor.py   # verdict: OK — enforcement layer intact
-python3 -m pytest -q                # 307 tests
+python3 -m pytest -q                # 324 tests
 ```
 
 - **[PROOF.md](PROOF.md)** — every claim, with the command that reproduces it
 - **[docs/ENFORCEMENT-TEST-PLAN.md](docs/ENFORCEMENT-TEST-PLAN.md)** — verify each
   control blocks, safely, on your own machine
+
+## It maintains its own calibration
+
+Guardrails rot. A limit tuned for last year's models fires on this year's honest work —
+and a guardrail that annoys is one you switch off. Two tools keep Forge honest over time:
+
+```bash
+python3 status/forge_calibrate.py .        # are my limits still right?
+bash scripts/forge-update.sh               # update, re-verify, auto-rollback
+```
+
+- **`forge_calibrate`** reads *your* run history and reports limits that are **too tight**
+  (firing on honest work) or **too loose** (never firing — security theatre), with the
+  evidence and the command to fix it. It never edits your config: a control that loosens
+  itself is a control that disarms itself, so Forge proposes and you decide.
+- **`forge-update`** is not `git pull`. After updating it re-runs the enforcement battery
+  and **rolls the update back automatically if any check fails** — verified against a
+  simulated supply-chain attack that stubbed out the deny-list under an innocuous commit
+  message. A governance tool must never be able to silently disarm itself.
+
+Models shift too: guidance for current models is in places *opposite* (one is a literal
+follower that spawns few subagents; another expands scope and delegates readily). Per-engine
+prompt deltas — and the measurements behind them — live in
+[docs/ENGINE-PROFILES.md](docs/ENGINE-PROFILES.md). **Enforcement itself is model-agnostic:**
+the guard inspects the tool call, never the model, so `curl … | sh` is denied whoever emitted it.
 
 ## Honest limits (please read)
 
