@@ -61,6 +61,19 @@ review → verify → close. Along the way the guard will **block**:
 Press **Shift+Tab** to cycle permission modes; with the launcher you can drop to
 **bypass** once a plan is approved (no more prompts — the guard still blocks).
 
+## Staying up to date
+
+```bash
+bash ~/Forge/scripts/forge-update.sh --check   # what's new?
+bash ~/Forge/scripts/forge-update.sh           # update + re-verify
+```
+
+Not a plain `git pull`: after updating it re-runs the enforcement battery (destructive
+command must block, safe command must pass, self-audit, deny corpus) and **rolls the
+update back automatically if any check fails** — a governance tool must never be able
+to silently disarm itself. It also flags when an update touches `hooks/`, `selfaudit/`
+or `evals/`. Restart your session afterwards so the plugin reloads.
+
 ## What Forge is NOT (read this)
 - **Not a security boundary.** The command denylist is a *footgun-catcher* — it stops
   honest mistakes and runaway loops, not a determined adversary (a denylist can't be
