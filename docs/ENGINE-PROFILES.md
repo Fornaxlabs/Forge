@@ -87,6 +87,55 @@ Add:    completeness scaffolding raises the floor ("list every X, then handle ea
         but it does not raise the ceiling — the model sets that.
 ```
 
+## Non-Claude engines (Kimi, GPT/Codex, Gemini, …)
+
+**First, the architectural point that matters most: Forge's ENFORCEMENT is
+model-agnostic.** The guard inspects the *tool call* — the command string, the target
+file path, the run counter — never the model's identity. `curl … | sh` is denied
+identically whether Kimi K3, GPT-5.6 or Opus 5 emitted it. So the deny-list, ceiling,
+loop cap, scope guard and done-gate need **no per-model work at all**.
+
+Two things are NOT model-agnostic, and they must not be confused:
+| Layer | Depends on | Status |
+|---|---|---|
+| **Enforcement** (does the block happen?) | the **harness** firing a pre-tool hook that can veto | per-harness — see [HARNESSES.md](HARNESSES.md); only Claude Code validated live |
+| **Prompt deltas** (is the model tuned well?) | the **model** | this file |
+
+### `kimi-k3` (Moonshot, released 2026-07-16 — 2.8T MoE, 1M context, open weights)
+Public reporting: on par with the best models at agentic coding; **long-horizon runs
+with "minimal human supervision"**, coordinating terminal tools over extended sessions.
+```text
+Ceiling: raise it (FORGE_CEILING) — long-horizon by design; 40 will fire on honest work.
+Scope:   declare scope up front; a minimally-supervised long run is exactly where
+         undeclared drift accumulates unseen.
+Verify:  do NOT assume self-verification (unmeasured here) — the done-gate carries it.
+```
+
+### `gpt-5.x` / `codex` (OpenAI — 5.5 Apr 2026, 5.6 GA Jul 2026, 5.2-Codex)
+Public guidance names the failure mode plainly: **"GPT-5.5's headline weakness is high
+confidence on wrong answers,"** with the recommended mitigation being to *"pair the
+agent with verification tools — test runs, type checks, and code review"* and to *"wrap
+the loop in verification."*
+```text
+Effort:  use the high/xhigh reasoning level where correctness beats latency.
+Verify:  MANDATORY, external. Confident-and-wrong is precisely the failure a
+         self-verification instruction cannot fix — the done-gate + adversarial review
+         are the mitigation the vendor guidance itself prescribes.
+Refusals: third-party guidance says to TEST refusal behaviour on your own dual-use
+         workloads rather than assuming parity across versions.
+```
+
+**Honest status of the two profiles above: DOCUMENTED, NOT MEASURED.** They are drawn
+from public documentation and reporting, not from running the four-way probe we ran on
+the Claude engines — that harness was not available here. Treat them exactly like the
+unvalidated adapters in HARNESSES.md: built to the documented behaviour, awaiting a
+measurement. If you run Forge on these engines, run the probe and send the numbers.
+
+**The strategic read:** "confidently wrong" (GPT-5.x) and "minimal human supervision"
+(Kimi K3) describe the conditions under which external, deterministic enforcement is
+worth *more*, not less. Forge's floor is model-agnostic by construction, so it applies
+to those engines the day their harness fires a blocking hook.
+
 ## The rule
 
 - **Never** add "verify/double-check your work" to any engine profile — measured
