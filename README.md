@@ -87,6 +87,7 @@ claude forge             # governed session: plugin + plan-mode
 prints a `🔨 Forge` banner so you can see it took. Any other `claude …` is untouched.
 No banner means it didn't load: you skipped `source ~/.zshrc`, or ran `install.sh
 --no-cli`. Prefer the raw flags? `claude --plugin-dir ~/Forge --permission-mode plan`.
+
 Inside the session:
 ```
 /forge:forge-init        # stamp gates into this project
