@@ -229,6 +229,59 @@ def tick_and_check(now: float | None = None) -> bool:
         return False
 
 
+# Multi-agent fan-out cap. Current engines (Opus 5, Fable 5) delegate to subagents far
+# more readily than earlier models, and vendor guidance recommends deterministic caps
+# on how many agents may be launched — delegation multiplies cost and blast radius.
+# Forge already counts tool CALLS run-wide; this counts distinct AGENTS. Tunable via
+# FORGE_MAX_AGENTS. Claude Code's 200/session limit is a far looser backstop.
+DEFAULT_MAX_AGENTS = _env_int("FORGE_MAX_AGENTS", 12)
+
+
+def record_agent(agent_id: str, now: float | None = None) -> bool:
+    """Record this agent in the active run's roster. Return True iff admitting it would
+    breach the fan-out cap (i.e. it is a NEW agent and the roster is already full).
+
+    Agents already on the roster are never blocked — the cap limits how WIDE a run may
+    fan out, not how much an admitted agent may do (the ceiling governs that). Empty
+    agent_id (the main agent, or a harness that sends none) is never counted.
+    Fails open on every error, like every other control here."""
+    if not agent_id:
+        return False
+    path = _active_run_path()
+    if not os.path.exists(path):
+        return False
+    try:
+        with open(path, "r+") as fh:
+            try:
+                fcntl.flock(fh, fcntl.LOCK_EX)
+            except OSError:
+                pass
+            try:
+                run = json.load(fh)
+            except ValueError:
+                return False
+            if not isinstance(run, dict):
+                return False
+            started = run.get("started_at", 0)
+            now = time.time() if now is None else now
+            if not started or (now - started) > STALE_SECONDS:
+                return False
+            agents = run.get("agents")
+            if not isinstance(agents, dict):
+                agents = {}
+            cap = int(run.get("max_agents", DEFAULT_MAX_AGENTS))
+            if agent_id not in agents and len(agents) >= cap:
+                return True  # new agent, roster full -> deny the fan-out
+            agents[agent_id] = int(agents.get(agent_id, 0)) + 1
+            run["agents"] = agents
+            fh.seek(0)
+            json.dump(run, fh)
+            fh.truncate()
+            return False
+    except OSError:
+        return False
+
+
 def iteration_breached(now: float | None = None) -> bool:
     """True iff the active run has hit the same blocker more than the iteration cap.
     Read-only (never mutates the run file). No active/stale run, or any error → False,
@@ -419,6 +472,14 @@ def evaluate(payload: dict[str, Any]) -> str | None:
     scope_reason = scope_violation(fields["tool_name"], fields["file_path"])
     if scope_reason is not None:
         return scope_reason
+    # Fan-out cap before the ceiling tick: a denied agent must not consume the run's
+    # tool-call budget. Also records per-agent activity, so a multi-agent run can be
+    # audited by WHO acted, not just how much happened.
+    if record_agent(fields["agent_id"]):
+        return (
+            "FORGE guard: subagent fan-out cap reached — this run has already engaged "
+            "the maximum number of agents; consolidate the work or raise FORGE_MAX_AGENTS"
+        )
     if tick_and_check():
         return "FORGE guard: tool-call ceiling reached — run halted, escalate to a human"
     return None

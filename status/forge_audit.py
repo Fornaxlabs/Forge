@@ -56,6 +56,8 @@ class RunAudit:
     researched: int
     forced_close: bool
     event_count: int
+    agent_count: int
+    agents: dict[str, int]
 
     @property
     def duration_s(self) -> float | None:
@@ -84,6 +86,20 @@ def _read_events(path: str) -> list[dict[str, Any]]:
                     out.append(rec)
     except OSError:
         pass
+    return out
+
+
+def _agent_map(end: dict[str, Any] | None) -> dict[str, int]:
+    """Per-agent mutating-call counts from run_end, defensively typed."""
+    raw = end.get("agents") if end else None
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, int] = {}
+    for k, v in raw.items():
+        try:
+            out[str(k)] = int(v)
+        except (TypeError, ValueError):
+            continue
     return out
 
 
@@ -129,6 +145,8 @@ def audit_run(events: list[dict[str, Any]]) -> RunAudit | None:
         researched=sum(1 for e in events if e.get("event") == "research"),
         forced_close=any(e.get("event") == "unverified_close" for e in events),
         event_count=len(events),
+        agent_count=int(end.get("agent_count", 0)) if end else 0,
+        agents=_agent_map(end),
     )
 
 
@@ -156,6 +174,7 @@ def summarize(runs: list[RunAudit]) -> dict[str, Any]:
         "forced_unverified_closes": sum(1 for r in runs if r.forced_close),
         "retriaged": sum(1 for r in runs if r.retriaged),
         "large_tier": sum(1 for r in runs if r.triage == "LARGE"),
+        "multi_agent": sum(1 for r in runs if r.agent_count > 1),
     }
 
 
@@ -178,6 +197,7 @@ def render_markdown(runs: list[RunAudit], summ: dict[str, Any], project: str, no
         "| Change scoping | declared file scope + logged scope changes |",
         "| Verification-before-done | run cannot close success without a verify event |",
         "| Loop discipline | repeated-blocker count capped and recorded |",
+        "| Multi-agent accountability | per-agent action counts recorded; fan-out capped |",
         "| Deterministic guard (deny/ceiling/scope) | wired at PreToolUse — verify with "
         "`forge_doctor.py`; enforced, not counted here |",
         "",
@@ -190,6 +210,7 @@ def render_markdown(runs: list[RunAudit], summ: dict[str, Any], project: str, no
         "— each is logged as an explicit assumption, not silent",
         f"- Re-triaged mid-run (scope-flip caught): **{summ['retriaged']}**",
         f"- LARGE-tier (high-risk) runs: **{summ['large_tier']}**",
+        f"- Multi-agent runs (>1 agent): **{summ['multi_agent']}**",
         "",
         "## Runs",
         "",

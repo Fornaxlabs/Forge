@@ -254,8 +254,15 @@ def end(
             )
         _append(active["path"], active["run_id"], "unverified_close",
                 {"outcome": outcome, "note": note or ""}, now)
-    _append(active["path"], active["run_id"], "run_end",
-            {"outcome": outcome, "iterations": iterations, "tool_calls": tc}, now)
+    # Preserve the multi-agent roster the guard built up (agent id -> mutating calls)
+    # before active_run.json is deleted — otherwise "who did what" is lost at close and
+    # the audit can only report totals.
+    agents = active.get("agents")
+    payload: dict[str, Any] = {"outcome": outcome, "iterations": iterations, "tool_calls": tc}
+    if isinstance(agents, dict) and agents:
+        payload["agents"] = agents
+        payload["agent_count"] = len(agents)
+    _append(active["path"], active["run_id"], "run_end", payload, now)
     os.remove(_active_path())
 
 

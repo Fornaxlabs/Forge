@@ -326,3 +326,69 @@ def test_env_int_parses_and_falls_back(monkeypatch):
     assert guard._env_int("X_NEG", 40) == 40      # non-positive -> fallback
     monkeypatch.delenv("X_MISSING", raising=False)
     assert guard._env_int("X_MISSING", 40) == 40
+
+
+# --- 2026-07-26: multi-agent fan-out cap + per-agent accountability ---
+
+def _fanout_run(tmp_path, cap=3):
+    import time as _t
+    home = tmp_path / ".forge"
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "active_run.json").write_text(json.dumps({
+        "run_id": "r", "path": str(home / "runs" / "r.jsonl"),
+        "started_at": _t.time(), "tool_calls": 0, "ceiling": 999, "max_agents": cap,
+    }))
+    return str(home)
+
+
+def _edit(agent):
+    return {"tool_name": "Edit", "agent_id": agent, "tool_input": {"file_path": "x.py"}}
+
+
+def test_fanout_cap_blocks_the_agent_over_the_limit(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", _fanout_run(tmp_path, cap=3))
+    for a in ("a1", "a2", "a3"):
+        assert guard.decide(_edit(a)) == 0
+    assert guard.decide(_edit("a4")) == 2          # 4th distinct agent -> blocked
+
+
+def test_fanout_cap_does_not_block_admitted_agents(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", _fanout_run(tmp_path, cap=2))
+    assert guard.decide(_edit("a1")) == 0
+    assert guard.decide(_edit("a2")) == 0
+    assert guard.decide(_edit("a4")) == 2          # roster full
+    assert guard.decide(_edit("a1")) == 0          # already admitted -> still allowed
+
+
+def test_agent_roster_records_per_agent_counts(tmp_path, monkeypatch):
+    home = _fanout_run(tmp_path, cap=5)
+    monkeypatch.setenv("FORGE_HOME", home)
+    guard.decide(_edit("a1"))
+    guard.decide(_edit("a1"))
+    guard.decide(_edit("a2"))
+    roster = json.loads((tmp_path / ".forge" / "active_run.json").read_text())["agents"]
+    assert roster == {"a1": 2, "a2": 1}            # who did what, not just how much
+
+
+def test_main_agent_without_id_is_never_counted(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", _fanout_run(tmp_path, cap=1))
+    assert guard.record_agent("") is False
+    for _ in range(5):
+        assert guard.decide({"tool_name": "Edit", "tool_input": {"file_path": "x.py"}}) == 0
+
+
+def test_fanout_fails_open_without_active_run(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", str(tmp_path / "nope"))
+    assert guard.record_agent("a1") is False
+
+
+def test_fanout_ignores_stale_run(tmp_path, monkeypatch):
+    import time as _t
+    home = tmp_path / ".forge"
+    home.mkdir(parents=True)
+    (home / "active_run.json").write_text(json.dumps({
+        "run_id": "r", "path": "p", "started_at": _t.time() - guard.STALE_SECONDS - 60,
+        "tool_calls": 0, "max_agents": 1, "agents": {"x": 1, "y": 1},
+    }))
+    monkeypatch.setenv("FORGE_HOME", str(home))
+    assert guard.record_agent("z") is False        # stale run never holds the fleet hostage
