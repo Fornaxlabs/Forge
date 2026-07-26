@@ -157,9 +157,15 @@ adapter validation on harnesses other than Claude Code. Forge runs its own gates
 (`ruff`, `mypy --strict`, `pytest`, gitleaks, guard-proof, self-audit); PRs must be
 green.
 
-## License
+## License & trademarks
 
-Apache-2.0 — see [LICENSE](LICENSE).
+Copyright 2026 Fornaxlabs. The **software** is licensed under Apache-2.0 — see
+[LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+The **names** "Forge" and "Fornaxlabs" are trademarks of Fornaxlabs; Apache-2.0 §6
+grants no trademark rights. Fork freely — but give your fork its own name, so nobody
+is misled about which enforcement they are actually running. See
+[TRADEMARK.md](TRADEMARK.md).
 
 ---
 

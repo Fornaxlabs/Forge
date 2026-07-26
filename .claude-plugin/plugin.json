@@ -1,8 +1,12 @@
 {
   "name": "forge",
   "version": "4.0.0",
-  "description": "Fornax Orchestrated Review & Governance Engine — governance harness: triage, adversarial review, loop discipline, shared memory, traces, evals.",
+  "description": "Fornax Orchestrated Review & Governance Engine \u2014 governance harness: triage, adversarial review, loop discipline, shared memory, traces, evals.",
   "author": {
-    "name": "FornaxLabs"
-  }
+    "name": "Fornaxlabs",
+    "url": "https://github.com/Fornaxlabs"
+  },
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/Fornaxlabs/Forge",
+  "repository": "https://github.com/Fornaxlabs/Forge"
 }

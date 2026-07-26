@@ -1,7 +1,18 @@
 FORGE — Fornax Orchestrated Review & Governance Engine
-Copyright 2026 Fornax IT (fornax-it.com)
+Copyright 2026 Fornaxlabs
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
-A copy of the License is in the LICENSE file, or at
-http://www.apache.org/licenses/LICENSE-2.0
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+"Forge", "Fornaxlabs" and the Fornaxlabs marks are trademarks of Fornaxlabs.
+The Apache License 2.0 grants no trademark rights (see Section 6) — see
+TRADEMARK.md for permitted use.
