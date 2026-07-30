@@ -167,3 +167,54 @@ def test_end_force_overrides_but_logs_assumption(tmp_path, monkeypatch):
     events = _lines(tmp_path)
     assert any(e["event"] == "unverified_close" and e["note"] == "hotfix" for e in events)
     assert events[-1]["event"] == "run_end"
+
+
+# --- 2026-07-30: ENFORCEABLE verification independence (Forge original) ---
+
+def test_model_family_maps_vendors():
+    assert ft.model_family("claude-opus-5") == "anthropic"
+    assert ft.model_family("gpt-5.6-codex") == "openai"
+    assert ft.model_family("kimi-k3") == "moonshot"
+    assert ft.model_family("something-unknown") == ""
+
+
+def test_independence_levels():
+    def v(a, b):
+        return [{"event": "verify", "passed": True, "author": a, "verifier": b}]
+
+    assert ft.verification_independence(v("claude-opus-5", "gpt-5.6")) == "cross-family"
+    assert ft.verification_independence(v("claude-opus-5", "claude-sonnet-5")) == "same-family"
+    assert ft.verification_independence([{"event": "verify", "passed": True}]) == "unlabelled"
+    assert ft.verification_independence([]) == "none"
+    # a FAILED cross-family check is not evidence of success
+    assert ft.verification_independence(
+        [{"event": "verify", "passed": False, "author": "claude-opus-5", "verifier": "gpt-5"}]
+    ) == "none"
+
+
+def test_independence_takes_the_best_available():
+    evs = [{"event": "verify", "passed": True, "author": "claude-opus-5", "verifier": "claude-opus-5"},
+           {"event": "verify", "passed": True, "author": "claude-opus-5", "verifier": "gpt-5.6"}]
+    assert ft.verification_independence(evs) == "cross-family"
+
+
+def test_strict_mode_refuses_same_family_close(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", str(tmp_path))
+    monkeypatch.setenv("FORGE_REQUIRE_CROSS_FAMILY", "1")
+    ft.main(["start", "--task", "t", "--triage", "SMALL", "--git-ref", "r"], now=T0)
+    ft.main(["log", "--event", "verify",
+             "--json", '{"passed":true,"author":"claude-opus-5","verifier":"claude-sonnet-5"}'], now=T0)
+    assert ft.main(["end", "--outcome", "green"], now=T0) == 1      # refused
+    ft.main(["log", "--event", "verify",
+             "--json", '{"passed":true,"author":"claude-opus-5","verifier":"gpt-5.6"}'], now=T0)
+    assert ft.main(["end", "--outcome", "green"], now=T0) == 0      # cross-family accepted
+
+
+def test_default_mode_labels_without_blocking(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", str(tmp_path))
+    monkeypatch.delenv("FORGE_REQUIRE_CROSS_FAMILY", raising=False)
+    ft.main(["start", "--task", "t", "--triage", "SMALL", "--git-ref", "r"], now=T0)
+    ft.main(["log", "--event", "verify",
+             "--json", '{"passed":true,"author":"claude-opus-5","verifier":"claude-opus-5"}'], now=T0)
+    assert ft.main(["end", "--outcome", "green"], now=T0) == 0
+    assert _lines(tmp_path)[-1]["independence"] == "same-family"    # recorded, not hidden

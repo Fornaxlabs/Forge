@@ -7,11 +7,15 @@
 > a capability class does not. (Prior art: `olsenbrands/fable-foreman` uses the same
 > class-based routing approach; no code shared.)
 >
-> **Verification independence:** prefer a *cross-family* blind verifier (a different
-> vendor's model checks the diff). Same-family verification inherits the same blind
-> spots. When the verifier resolves to the author's model, label it —
-> "blind-verified (same model, independent context)" — never imply independence you
-> did not obtain.
+> **Verification independence — ENFORCED, not requested (Forge original).** A verifier
+> from the author's own model family inherits the author's blind spots, so "verified"
+> by the same family is weaker evidence. Forge records the independence level of every
+> verification in the trace — `cross-family` / `same-family` / `unlabelled` / `none` —
+> and `FORGE_REQUIRE_CROSS_FAMILY=1` makes the done-gate **refuse a success close**
+> without a genuinely independent check. Label the verifier and author per event:
+> `log --event verify --json '{"passed":true,"author":"<model>","verifier":"<model>"}'`.
+> Elsewhere in the ecosystem this is a rule a model is asked to follow; here it is a
+> gate that returns non-zero. Default mode records and labels; strict mode blocks.
 
 Forge's **roles are stable; engines are staffing** (L1 vs L2). A role ("reviewer") does
 not change when you swap the model beneath it — but the *prompt deltas* that get the

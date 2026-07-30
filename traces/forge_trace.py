@@ -184,6 +184,54 @@ def record_blocker(blocker_id: str, now: float) -> int:
     return count
 
 
+# --- verification independence (Forge original, 2026-07-30) -------------------
+# Prior art LABELS a same-model verification. Forge can REFUSE it: independence is
+# recorded per verify event and the done-gate can require it. A verifier that shares
+# the author's model family inherits the author's blind spots, so "verified" by the
+# same family is weaker evidence — and weak evidence presented as proof is the exact
+# failure this project exists to stop.
+_FAMILIES = {
+    "claude": "anthropic", "opus": "anthropic", "sonnet": "anthropic",
+    "haiku": "anthropic", "fable": "anthropic", "mythos": "anthropic",
+    "gpt": "openai", "codex": "openai", "o1": "openai", "o3": "openai",
+    "gemini": "google", "kimi": "moonshot", "grok": "xai", "llama": "meta",
+}
+
+
+def model_family(model: str) -> str:
+    """Map a model id/name to its vendor family; '' when unrecognised.
+    Substring match so 'claude-opus-5' and 'gpt-5.6-codex' both resolve."""
+    m = (model or "").strip().lower()
+    for token, fam in _FAMILIES.items():
+        if token in m:
+            return fam
+    return ""
+
+
+def verification_independence(events: list[dict[str, Any]]) -> str:
+    """Strongest independence achieved by any verify event in this run:
+      "cross-family" — a different vendor's model reproduced the evidence
+      "same-family"  — verified, but by the author's own family (weaker)
+      "unlabelled"   — verified, but the run never said who verified
+      "none"         — no verification at all
+    Returns the BEST result, because one genuinely independent check is enough."""
+    best = "none"
+    rank = {"none": 0, "unlabelled": 1, "same-family": 2, "cross-family": 3}
+    for rec in events:
+        if rec.get("event") not in _VERIFY_EVENTS:
+            continue
+        if rec.get("passed") is False or rec.get("ok") is False:
+            continue
+        v, a = model_family(str(rec.get("verifier", ""))), model_family(str(rec.get("author", "")))
+        if v and a:
+            got = "cross-family" if v != a else "same-family"
+        else:
+            got = "unlabelled"
+        if rank[got] > rank[best]:
+            best = got
+    return best
+
+
 # Outcomes that assert the work succeeded — these MUST be backed by verification.
 # "green" is Forge's own pipeline word for success (see commands/forge.md); include it
 # so the done-gate actually bites on Forge's canonical outcome. "escalated"/"abandoned"
@@ -244,6 +292,19 @@ def end(
     # claim success without recorded verification. "No evidence = didn't happen" made
     # enforceable. --force still lets a human override, but the unverified close is
     # LOGGED as an explicit assumption, never silent.
+    events = _read_events(active["path"])
+    independence = verification_independence(events)
+    # Opt-in strict mode: a success close REQUIRES genuinely independent verification.
+    if (outcome.strip().lower() in _SUCCESS_OUTCOMES
+            and os.environ.get("FORGE_REQUIRE_CROSS_FAMILY") == "1"
+            and independence != "cross-family" and not force):
+        raise ValueError(
+            f"cannot close as '{outcome}': verification independence is "
+            f"'{independence}', but FORGE_REQUIRE_CROSS_FAMILY=1 demands a verifier "
+            "from a different model family than the author. Log it as "
+            "`log --event verify --json '{\"passed\":true,\"author\":\"<model>\","
+            "\"verifier\":\"<other-family-model>\"}'`, or drop the strict flag."
+        )
     if outcome.strip().lower() in _SUCCESS_OUTCOMES and not has_verification(active["path"]):
         if not force:
             raise ValueError(
@@ -258,7 +319,8 @@ def end(
     # before active_run.json is deleted — otherwise "who did what" is lost at close and
     # the audit can only report totals.
     agents = active.get("agents")
-    payload: dict[str, Any] = {"outcome": outcome, "iterations": iterations, "tool_calls": tc}
+    payload: dict[str, Any] = {"outcome": outcome, "iterations": iterations,
+                               "tool_calls": tc, "independence": independence}
     if isinstance(agents, dict) and agents:
         payload["agents"] = agents
         payload["agent_count"] = len(agents)
