@@ -455,3 +455,24 @@ def test_chained_destructive_still_blocked_despite_control_segment(tmp_path, mon
     payload = {"tool_name": "Bash",
                "tool_input": {"command": "forge_trace end --outcome green && rm -rf /"}}
     assert guard.decide(payload) == 2      # deny-list precedes the exemption
+
+
+# --- 2026-07-30 (field bug #3): the halt message must be RUNNABLE ---
+
+def test_halt_message_gives_real_paths_not_a_nonexistent_command(tmp_path, monkeypatch):
+    """It previously said "run `forge_trace end`" — not an executable on PATH, so the
+    guard's own remedy could not be run. A halt the operator cannot clear gets Forge
+    uninstalled."""
+    monkeypatch.setenv("FORGE_HOME", str(tmp_path))
+    msg = guard._halt_message("test reason")
+    assert str(tmp_path) in msg                      # the actual run file to remove
+    assert "traces/forge_trace.py" in msg            # a real script path, invoked by python3
+    assert "python3 " in msg
+    assert "`forge_trace end`" not in msg            # the unrunnable form is gone
+
+
+def test_ceiling_and_loop_halts_both_use_the_actionable_message(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", _active(tmp_path, {"authz": 9}))
+    reason = guard.evaluate({"tool_name": "Edit", "tool_input": {"file_path": "x.py"}})
+    assert reason is not None
+    assert "Clear it:" in reason and "escalate to a human" in reason

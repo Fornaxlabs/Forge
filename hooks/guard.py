@@ -358,6 +358,29 @@ def is_forge_control(command: str) -> bool:
     return any(_FORGE_CONTROL.match(seg) for seg in _SEP.split(command or ""))
 
 
+def _halt_message(reason: str) -> str:
+    """A halt message whose remedy is COPY-PASTEABLE and actually exists.
+
+    Earlier versions said "run `forge_trace end`" — but forge_trace is a Python script,
+    not an executable on PATH, so the guard's own advice could not be run (field bug,
+    2026-07-30). A halt the operator cannot clear is a halt that gets Forge uninstalled,
+    so the message now resolves the real path and offers the always-works escape."""
+    run = _active_run_path()
+    here = os.path.dirname(os.path.abspath(__file__))
+    trace = os.path.join(os.path.dirname(here), "traces", "forge_trace.py")
+    return (
+        f"FORGE guard: {reason} — run halted.\n"
+        "If this was honest work (a review plus its remediation easily exceeds the "
+        "default), close this run at a clean task boundary and start a fresh one.\n"
+        f"  Clear it:  rm -f {run}\n"
+        f"  Or close properly:  python3 {trace} end --outcome escalated\n"
+        "  Or raise the limit:  FORGE_CEILING=<n> (env) / --ceiling <n> at start\n"
+        "In Claude Code, prefix with ! to run it in your own shell.\n"
+        "If you cannot tell honest work from a runaway, escalate to a human — that is "
+        "what this halt is for."
+    )
+
+
 def _run_scope(now: float | None = None) -> list[str] | None:
     """The active run's declared scope globs, or None if the run declared none.
 
@@ -513,10 +536,9 @@ def evaluate(payload: dict[str, Any]) -> str | None:
     if is_forge_control(command):
         return None
     if iteration_breached():
-        return (
-            "FORGE guard: loop cap — the same blocker exceeded the iteration limit; "
-            "attribute (PLAN|CONTEXT|TOOL|CAPABILITY) and escalate to a human"
-        )
+        return _halt_message(
+            "loop cap — the same blocker exceeded the iteration limit; attribute "
+            "(PLAN|CONTEXT|TOOL|CAPABILITY)")
     scope_reason = scope_violation(fields["tool_name"], fields["file_path"])
     if scope_reason is not None:
         return scope_reason
@@ -529,15 +551,7 @@ def evaluate(payload: dict[str, Any]) -> str | None:
             "the maximum number of agents; consolidate the work or raise FORGE_MAX_AGENTS"
         )
     if tick_and_check():
-        return (
-            "FORGE guard: tool-call ceiling reached — run halted. If this was honest "
-            "work (a review plus its remediation is easily 40+ calls), close the run "
-            "and start a fresh one at a clean task boundary: `forge_trace end "
-            "--outcome <o>` then `/forge <next task>`. To raise the limit instead: "
-            "FORGE_CEILING=<n> or `forge_trace start --ceiling <n>`. If you cannot "
-            "tell honest work from a runaway, escalate to a human — that is what this "
-            "halt is for."
-        )
+        return _halt_message("tool-call ceiling reached")
     return None
 
 
