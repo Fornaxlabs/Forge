@@ -476,3 +476,39 @@ def test_ceiling_and_loop_halts_both_use_the_actionable_message(tmp_path, monkey
     reason = guard.evaluate({"tool_name": "Edit", "tool_input": {"file_path": "x.py"}})
     assert reason is not None
     assert "Clear it:" in reason and "escalate to a human" in reason
+
+
+# --- 2026-07-30: self-heal an orphaned ad-hoc run (field RCA) ---
+
+def _orphan(tmp_path, calls=9999, adhoc=True, git=False):
+    import time as _t
+    home = tmp_path / ".forge"
+    home.mkdir(parents=True, exist_ok=True)
+    if git:
+        (tmp_path / ".git").mkdir(exist_ok=True)
+    (home / "active_run.json").write_text(json.dumps({
+        "run_id": "r", "path": str(home / "runs" / "r.jsonl"),
+        "started_at": _t.time(), "tool_calls": calls, "ceiling": 40,
+        "blockers": {"x": 99}, "scope": ["only.py"], "ad_hoc": adhoc,
+    }))
+    return str(home)
+
+
+def test_orphan_adhoc_run_never_enforces(tmp_path, monkeypatch):
+    """A poisoned ad-hoc run outside a project wedged a real user permanently.
+    Preventing new ones is not enough — existing ones must stop enforcing."""
+    monkeypatch.setenv("FORGE_HOME", _orphan(tmp_path))
+    assert guard.decide({"tool_name": "Edit", "tool_input": {"file_path": "any.py"}}) == 0
+    assert guard.iteration_breached() is False
+    assert guard.scope_violation("Edit", "outside.py") is None
+
+
+def test_adhoc_run_INSIDE_a_project_still_enforces(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", _orphan(tmp_path, git=True))
+    assert guard.decide({"tool_name": "Edit", "tool_input": {"file_path": "any.py"}}) == 2
+
+
+def test_real_run_outside_a_project_still_enforces(tmp_path, monkeypatch):
+    """Only ad_hoc runs are self-healed; a deliberate /forge run is always honoured."""
+    monkeypatch.setenv("FORGE_HOME", _orphan(tmp_path, adhoc=False))
+    assert guard.decide({"tool_name": "Edit", "tool_input": {"file_path": "any.py"}}) == 2

@@ -192,6 +192,23 @@ def _active_run_path() -> str:
     return os.path.join(_forge_home(), "active_run.json")
 
 
+def _is_orphan_adhoc(run: dict[str, Any]) -> bool:
+    """True for an ad-hoc session run living OUTSIDE a project.
+
+    Self-healing for a real field failure: an ad-hoc run armed in $HOME has no task
+    boundary, so nothing ever closes it — one counter accumulated across every session
+    until it crossed the ceiling and halted them all, permanently. Preventing new ones
+    is not enough; anyone already holding a poisoned file stays wedged forever. So the
+    guard now simply IGNORES such a run instead of enforcing against it.
+
+    Deliberately narrow: only ad_hoc runs, and only where the parent directory is not a
+    git project. A real /forge run is always honoured, wherever it lives."""
+    if not run.get("ad_hoc"):
+        return False
+    parent = os.path.dirname(os.path.abspath(_forge_home()))
+    return not os.path.isdir(os.path.join(parent, ".git"))
+
+
 def _extra_patterns() -> list[str]:
     """Project-specific deny regexes from ${forge-home}/deny-extra.txt (one per line,
     '#' comments allowed). Lets a project extend the deny-list WITHOUT forking the
@@ -230,6 +247,8 @@ def tick_and_check(now: float | None = None) -> bool:
             now = time.time() if now is None else now
             if not started or (now - started) > STALE_SECONDS:
                 return False  # crashed/forgotten run — don't hold the shell hostage
+            if _is_orphan_adhoc(run):
+                return False  # orphaned session run outside a project — never enforce
             count = int(run.get("tool_calls", 0)) + 1
             run["tool_calls"] = count
             ceiling = int(run.get("ceiling", DEFAULT_CEILING))
@@ -315,6 +334,8 @@ def iteration_breached(now: float | None = None) -> bool:
     started = run.get("started_at", 0)
     now = time.time() if now is None else now
     if not started or (now - started) > STALE_SECONDS:
+        return False
+    if _is_orphan_adhoc(run):
         return False
     cap = int(run.get("iteration_cap", DEFAULT_ITERATION_CAP))
     blockers = run.get("blockers", {})
@@ -405,6 +426,8 @@ def _run_scope(now: float | None = None) -> list[str] | None:
     started = run.get("started_at", 0)
     now = time.time() if now is None else now
     if not started or (now - started) > STALE_SECONDS:
+        return None
+    if _is_orphan_adhoc(run):
         return None
     scope = run.get("scope")
     if not isinstance(scope, list):
