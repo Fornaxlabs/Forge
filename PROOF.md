@@ -132,6 +132,16 @@ bash scripts/forge-comply.sh
   are also opt-in — a run that declares no scope, or logs a fake verify event, isn't
   stopped. Like the denylist, they raise the floor and make skipping visible; they are
   not a proof no assumption was made.
+- **The run-scoped controls are soft against a determined agent — by construction.**
+  The ceiling, loop cap and scope guard all read `.forge/active_run.json`, and that file
+  is writable by the very agent they constrain: it could set `tool_calls: 0` or
+  `ceiling: 999999` and escape. This was always true and is not introduced by the
+  orphan self-heal (2026-07-30), which uses the same pre-existing property. Treat these
+  three as **footgun-catchers for an honest runaway**, exactly like the denylist — not
+  as adversarial controls. The **denylist itself is independent of run state** and stays
+  active regardless, which is why it is the one control we make safety claims about.
+  When the self-heal does disengage those controls, it says so on stderr on every call;
+  a silently-disabled control would be worse than none.
 - **Multi-agent is Claude-Code-only today.** The Codex adapter (the portability
   claim) is designed in `docs/MULTI-HARNESS-ANALYSIS.md` but not yet built. Until it
   ships, "portable across agents" is a roadmap item, not a fact.

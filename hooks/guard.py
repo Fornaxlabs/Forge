@@ -206,7 +206,20 @@ def _is_orphan_adhoc(run: dict[str, Any]) -> bool:
     if not run.get("ad_hoc"):
         return False
     parent = os.path.dirname(os.path.abspath(_forge_home()))
-    return not os.path.isdir(os.path.join(parent, ".git"))
+    orphan = not os.path.isdir(os.path.join(parent, ".git"))
+    if orphan:
+        # NEVER disable a control silently. A user who believes they are protected
+        # while they are not is the failure this whole project exists to prevent, so
+        # the degradation is announced on every call rather than assumed acceptable.
+        print(
+            "FORGE notice: ignoring an orphaned ad-hoc run at "
+            f"{_forge_home()} (no git project here) — the tool-call ceiling, loop cap "
+            "and scope guard are NOT enforcing for it. The destructive-command "
+            "deny-list is unaffected and still active. Run Forge from inside a git "
+            "project, or start a real run with forge_trace start, to restore them.",
+            file=sys.stderr,
+        )
+    return orphan
 
 
 def _extra_patterns() -> list[str]:
