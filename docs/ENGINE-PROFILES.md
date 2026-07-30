@@ -72,6 +72,23 @@ were checked against the real file diffs.
 Reproduce: see `evals/` and the method above — one narrow task, diff-checked, no
 verification/scope instruction in the prompt.
 
+## Ceiling: FIELD DATA (2026-07-30)
+
+A real governed run on FornaxOS hit the ceiling doing honest work: **one adversarial
+subagent review cost 39 mutating calls by itself**, against a default of 40 — so review
+and remediation could not coexist in a single run, and the guard blocked the fixing.
+
+Lessons, applied:
+- The default is now **150**. The ceiling is a **runaway backstop, not a budget**;
+  repetition-without-progress is caught earlier and more precisely by the loop cap.
+- **Subagent calls stay counted.** Exempting them would re-open the verified 118-vs-40
+  bug where agents in different cwds didn't share state. The counter was right; the
+  number was wrong.
+- Budget rule of thumb per run: **~40 for a thorough review, plus remediation, plus
+  build.** Long-horizon engines need more, not less.
+- A review and its remediation are a clean task boundary anyway — `forge_trace end`
+  then a fresh `/forge <task>` is the intended path, and the block message now says so.
+
 ## The profiles
 
 Deltas only — everything else comes from CLAUDE.md and is engine-independent.

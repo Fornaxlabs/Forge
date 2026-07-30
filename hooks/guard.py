@@ -78,6 +78,7 @@ _STATIC_DENY = [
     r"\b(?:curl|wget)\b[^|;&]*\|\s*(?:sudo\s+)?(?:python3?|perl|ruby|node)\b",
 ]
 
+
 def _env_int(name: str, fallback: int) -> int:
     """Read a positive int from the environment; any garbage falls back safely.
     Never raises — a bad env var must not wedge the guard."""
@@ -88,14 +89,26 @@ def _env_int(name: str, fallback: int) -> int:
         return fallback
 
 
-# Ceiling calibration (revised 2026-07-26). 40 was tuned for short, supervised runs.
+# Ceiling calibration (revised again 2026-07-30 — FIELD DATA, not a guess).
+# 40 was still wrong and fired on honest work in a real FornaxOS run: a single
+# adversarial subagent review consumed 39 calls by itself, so review + remediation
+# could not coexist in one run and the guard blocked legitimate fixing. A ceiling that
+# punishes doing the review properly is a ceiling users disable — the exact death
+# documented below, which this default then walked into.
+#
+# The ceiling is a RUNAWAY BACKSTOP, not a budget. A runaway loop does hundreds of
+# calls; repetition-without-progress is caught earlier and more precisely by the loop
+# cap (same blocker 3x). So the number only has to sit above legitimate long work:
+# 150 clears a 39-call review plus remediation plus build with headroom, and still
+# stops a loop long before it does real damage.
+# Original note, which correctly predicted the failure above:
 # Current long-horizon engines (Fable 5, Opus 5) sustain autonomous runs for HOURS and
 # routinely exceed 40 mutating actions on legitimate work — a ceiling that fires on
 # honest work trains users to disable it, which is how a guardrail dies. So the default
 # is env-tunable (FORGE_CEILING) and per-run overridable (`TRACE start --ceiling N`);
 # see docs/ENGINE-PROFILES.md for per-engine values. It remains a RUNAWAY backstop —
 # a number you should not reach — not a budget.
-DEFAULT_CEILING = _env_int("FORGE_CEILING", 40)
+DEFAULT_CEILING = _env_int("FORGE_CEILING", 150)
 # Loop discipline: max review iterations on the SAME blocker before a human must
 # take over. Enforced here (not just prose): once the reviewer has recorded a
 # blocker this many times (via `forge_trace blocker --id`), the next tool call in
@@ -480,7 +493,15 @@ def evaluate(payload: dict[str, Any]) -> str | None:
             "the maximum number of agents; consolidate the work or raise FORGE_MAX_AGENTS"
         )
     if tick_and_check():
-        return "FORGE guard: tool-call ceiling reached — run halted, escalate to a human"
+        return (
+            "FORGE guard: tool-call ceiling reached — run halted. If this was honest "
+            "work (a review plus its remediation is easily 40+ calls), close the run "
+            "and start a fresh one at a clean task boundary: `forge_trace end "
+            "--outcome <o>` then `/forge <next task>`. To raise the limit instead: "
+            "FORGE_CEILING=<n> or `forge_trace start --ceiling <n>`. If you cannot "
+            "tell honest work from a runaway, escalate to a human — that is what this "
+            "halt is for."
+        )
     return None
 
 
