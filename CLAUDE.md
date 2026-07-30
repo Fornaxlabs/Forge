@@ -36,7 +36,24 @@ Two of these BIND (hooks); the rest is what no hook can reach.
 - **Report only what a tool result shows.** No progress claim without evidence; never
   end a turn stating intent you did not execute.
 
-## Engines
+## Verification independence
+A verifier that shares the worker's blind spots is not an independent check.
+- **Blind**: the verifier gets the ORIGINAL task verbatim and none of the worker's
+  reasoning or self-report. It reproduces the evidence; it does not review a summary.
+- **Cross-family where available**: prefer a verifier from a DIFFERENT model family than
+  the one that produced the diff (Claude checks Codex, Codex checks Claude). Same-family
+  verification inherits the same failure modes.
+- **Label the degraded case, never imply independence you didn't get**: if the verifier
+  resolves to the same model as the author, say so —
+  "blind-verified (same model, independent context)".
+- Required for every accepted change except a single-file, zero-logic edit.
+
+## Engines — resolve by CAPABILITY CLASS, not model name
+Never hard-code model names in routing: a maintained model table rots on every release.
+Route by class, resolved at runtime from whatever the session actually has:
+FRONTIER (judgment: plan, review, ambiguity) · WORKHORSE (implementation) · FAST
+(scanning, mechanical edits). Re-probe when the session model changes (a /model switch,
+a fallback, a quota event) rather than routing off a stale identity.
 Roles are stable; the model beneath them is staffing. Per-engine prompt deltas and the
 measurements behind them: @docs/ENGINE-PROFILES.md. Never prompt "verify your work" —
 measured redundant on every current engine, and verification is a gate, not a request.

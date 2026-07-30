@@ -1,5 +1,18 @@
 # Engine profiles — tune the prompt to the model, not the other way round
 
+> **Routing rule (2026-07-30): resolve by CAPABILITY CLASS, never by model name.**
+> The per-model tables below are *prompt deltas*, not a routing table. Routing uses
+> FRONTIER / WORKHORSE / FAST, resolved at runtime from the live session, and re-probed
+> when the session model changes. A hand-maintained model list rots on every release;
+> a capability class does not. Credit where due: `olsenbrands/fable-foreman` executes
+> this better than our first attempt did, and we adopted it.
+>
+> **Verification independence:** prefer a *cross-family* blind verifier (a different
+> vendor's model checks the diff). Same-family verification inherits the same blind
+> spots. When the verifier resolves to the author's model, label it —
+> "blind-verified (same model, independent context)" — never imply independence you
+> did not obtain.
+
 Forge's **roles are stable; engines are staffing** (L1 vs L2). A role ("reviewer") does
 not change when you swap the model beneath it — but the *prompt deltas* that get the
 best out of that model **do**. Vendor guidance for current Claude models is not just
