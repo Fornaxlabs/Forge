@@ -336,17 +336,26 @@ def iteration_breached(now: float | None = None) -> bool:
 # still blocked even when disguised alongside it. Ending a run is itself logged, so the
 # escape is auditable rather than silent.
 _FORGE_CONTROL = re.compile(
-    r"^\s*(?:[\w./\\-]*python[\d.]*\s+)?"          # optional interpreter
-    r"[\"']?[^\"'\s]*forge_trace\.py[\"']?\s+"        # the trace CLI itself
-    r"(end|start|scope|log|blocker)\b",               # a known subcommand
+    r"^\s*(?:[\w./\\-]*python[\d.]*\s+)?"              # optional interpreter
+    r"[\"']?[^\"'\s]*(?:forge_trace(?:\.py)?|TRACE)[\"']?\s+"  # trace CLI or its alias
+    r"(end|start|scope|log|blocker)\b",                   # a known subcommand
     re.I,
 )
 
 
 def is_forge_control(command: str) -> bool:
-    """True for a canonical `forge_trace.py <subcommand>` invocation — the run-control
-    commands that must remain runnable even while a run is halted."""
-    return bool(_FORGE_CONTROL.match(command or ""))
+    """True when the command's effective action is Forge run-control.
+
+    Checked PER SEGMENT, because the real-world invocation is almost never bare: the
+    agent writes `cd <project> && python3 .../forge_trace.py end`, and Forge's own
+    commands/forge.md uses a `TRACE` alias. A first version matched only the bare form
+    and so failed to unlock the very deadlock it was written to fix (field bug,
+    2026-07-30). Accepts forge_trace, forge_trace.py and TRACE, with or without an
+    interpreter or a leading `cd`.
+
+    Safe because is_denied() runs BEFORE this exemption, so a destructive segment is
+    still blocked no matter what it is chained to."""
+    return any(_FORGE_CONTROL.match(seg) for seg in _SEP.split(command or ""))
 
 
 def _run_scope(now: float | None = None) -> list[str] | None:

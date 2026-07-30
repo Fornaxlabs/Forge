@@ -434,3 +434,24 @@ def test_escape_hatch_is_not_a_bypass(tmp_path, monkeypatch):
     sneaky = {"tool_name": "Bash",
               "tool_input": {"command": "python3 traces/forge_trace.py end; rm -rf /"}}
     assert guard.decide(sneaky) == 2
+
+
+# --- 2026-07-30 (field bug #2): the exemption must match how it is REALLY invoked ---
+
+@pytest.mark.parametrize("cmd", [
+    "cd /home/u/proj && python3 ~/Forge/traces/forge_trace.py end --outcome success",
+    "TRACE end --outcome success",              # the alias used in commands/forge.md
+    "forge_trace end --outcome success",        # bare form the agent actually printed
+    "forge_trace.py start --task t --triage SMALL --git-ref n",
+])
+def test_real_world_control_forms_recognised(cmd):
+    """The first fix matched only a bare `python3 forge_trace.py …` and therefore
+    failed to unlock the deadlock it was written for."""
+    assert guard.is_forge_control(cmd) is True
+
+
+def test_chained_destructive_still_blocked_despite_control_segment(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", _active(tmp_path, {"authz": 9}))
+    payload = {"tool_name": "Bash",
+               "tool_input": {"command": "forge_trace end --outcome green && rm -rf /"}}
+    assert guard.decide(payload) == 2      # deny-list precedes the exemption
