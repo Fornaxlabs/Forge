@@ -326,6 +326,29 @@ def iteration_breached(now: float | None = None) -> bool:
         return False
 
 
+# Forge's OWN run-control commands. A halted run must stay escapable: the ceiling and
+# loop-cap messages tell the operator to run `forge_trace end`, but that is itself a
+# Bash call, so a breached run blocked its own remedy — the escape hatch sat behind the
+# lock, and the only way out was disabling Forge. (Field bug, 2026-07-30.)
+#
+# Safety: this exempts ONLY a canonical invocation of Forge's own trace CLI with a
+# known subcommand, and it is checked AFTER the deny-list, so destructive commands are
+# still blocked even when disguised alongside it. Ending a run is itself logged, so the
+# escape is auditable rather than silent.
+_FORGE_CONTROL = re.compile(
+    r"^\s*(?:[\w./\\-]*python[\d.]*\s+)?"          # optional interpreter
+    r"[\"']?[^\"'\s]*forge_trace\.py[\"']?\s+"        # the trace CLI itself
+    r"(end|start|scope|log|blocker)\b",               # a known subcommand
+    re.I,
+)
+
+
+def is_forge_control(command: str) -> bool:
+    """True for a canonical `forge_trace.py <subcommand>` invocation — the run-control
+    commands that must remain runnable even while a run is halted."""
+    return bool(_FORGE_CONTROL.match(command or ""))
+
+
 def _run_scope(now: float | None = None) -> list[str] | None:
     """The active run's declared scope globs, or None if the run declared none.
 
@@ -476,6 +499,10 @@ def evaluate(payload: dict[str, Any]) -> str | None:
     command = fields["command"]
     if command and is_denied(command):
         return "FORGE guard: destructive command blocked"
+    # Escape hatch, checked AFTER the deny-list: Forge's own run-control commands stay
+    # runnable during a halt, or the halt is unrecoverable and users disable Forge.
+    if is_forge_control(command):
+        return None
     if iteration_breached():
         return (
             "FORGE guard: loop cap — the same blocker exceeded the iteration limit; "

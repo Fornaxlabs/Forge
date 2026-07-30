@@ -392,3 +392,45 @@ def test_fanout_ignores_stale_run(tmp_path, monkeypatch):
     }))
     monkeypatch.setenv("FORGE_HOME", str(home))
     assert guard.record_agent("z") is False        # stale run never holds the fleet hostage
+
+
+# --- 2026-07-30: the escape hatch must not sit behind the lock (field bug) ---
+
+@pytest.mark.parametrize("cmd", [
+    "python3 traces/forge_trace.py end --outcome green",
+    "python3 /abs/path/forge_trace.py start --task t --triage SMALL --git-ref n",
+    'python3 "$CLAUDE_PLUGIN_ROOT/traces/forge_trace.py" scope --add x.py',
+    "forge_trace.py log --event verify",
+])
+def test_forge_control_recognised(cmd):
+    assert guard.is_forge_control(cmd) is True
+
+
+@pytest.mark.parametrize("cmd", [
+    "rm -rf /",
+    "python3 other_tool.py end",
+    "echo forge_trace.py end",              # not a canonical invocation
+    "python3 traces/forge_trace.py nonsense",  # unknown subcommand
+])
+def test_non_control_not_exempt(cmd):
+    assert guard.is_forge_control(cmd) is False
+
+
+def test_halted_run_can_still_be_ended(tmp_path, monkeypatch):
+    """A breached run must remain escapable, or the halt is unrecoverable and the
+    only way out is disabling Forge entirely."""
+    monkeypatch.setenv("FORGE_HOME", _active(tmp_path, {"authz": 9}))  # loop cap breached
+    edit = {"tool_name": "Edit", "tool_input": {"file_path": "x.py"}}
+    assert guard.decide(edit) == 2                                     # ordinary work halted
+    end = {"tool_name": "Bash",
+           "tool_input": {"command": "python3 traces/forge_trace.py end --outcome escalated"}}
+    assert guard.decide(end) == 0                                      # escape still works
+
+
+def test_escape_hatch_is_not_a_bypass(tmp_path, monkeypatch):
+    """The deny-list is checked BEFORE the exemption, so a destructive command cannot
+    ride along with a control command."""
+    monkeypatch.setenv("FORGE_HOME", _active(tmp_path, {"authz": 9}))
+    sneaky = {"tool_name": "Bash",
+              "tool_input": {"command": "python3 traces/forge_trace.py end; rm -rf /"}}
+    assert guard.decide(sneaky) == 2
