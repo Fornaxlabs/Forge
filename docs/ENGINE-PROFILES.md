@@ -4,8 +4,8 @@
 > The per-model tables below are *prompt deltas*, not a routing table. Routing uses
 > FRONTIER / WORKHORSE / FAST, resolved at runtime from the live session, and re-probed
 > when the session model changes. A hand-maintained model list rots on every release;
-> a capability class does not. Credit where due: `olsenbrands/fable-foreman` executes
-> this better than our first attempt did, and we adopted it.
+> a capability class does not. (Prior art: `olsenbrands/fable-foreman` uses the same
+> class-based routing approach; no code shared.)
 >
 > **Verification independence:** prefer a *cross-family* blind verifier (a different
 > vendor's model checks the diff). Same-family verification inherits the same blind
