@@ -73,6 +73,28 @@ SAFE: tuple[str, ...] = (
     "git rm stale.txt && git commit -m cleanup",
     "grep -rf patterns.txt src/",
     "ls -la /etc",
+    # 2026-07-30 — the doctor only ever proved the guard BLOCKS what it should. It had
+    # no real check that it ALLOWS what it must, and that is exactly the class the
+    # recovery-command lockout fell into. Integrity is not usability: a guard that
+    # blocks honest work gets uninstalled just as surely as one that misses a disaster.
+    # Day-job commands:
+    "npm install",
+    "pip install -r requirements.txt",
+    "make build",
+    "docker compose up -d",
+    "git commit -m 'fix: thing'",
+    "git rebase main",
+    "git stash pop",
+    "curl -sSL https://example.com/f.tgz -o f.tgz",
+    "cat script.sh | sh",
+    "find . -name '*.pyc' -delete",
+    "chmod -R 755 ./public",
+    "dd if=input.bin of=output.bin bs=1M",
+    # THE RECOVERY PATH ITSELF — a halted run must always be closable, or the guard
+    # locks you out of unlocking it (field bug, 2026-07-30).
+    "python3 /plugin/traces/forge_trace.py end --outcome escalated",
+    "forge_trace end --outcome green",
+    "cd /proj && python3 /plugin/traces/forge_trace.py end --outcome green",
 )
 
 

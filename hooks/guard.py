@@ -63,7 +63,10 @@ from typing import Any
 # Unambiguous catastrophic patterns (checked verbatim).
 _STATIC_DENY = [
     r"\bmkfs\b",
-    r"\bdd\s+if=",
+    # dd is only catastrophic when the OUTPUT is a raw device; `dd if=a.bin of=b.bin`
+    # is an ordinary file copy and blocking it was a measured false positive
+    # (found 2026-07-30 by widening the doctor's safe corpus).
+    r"\bdd\s+.*\bof=/dev/",
     r"\bdrop\s+(table|database)\b",
     r"\btruncate\s+table\b",
     r":\s*\(\s*\)\s*\{.*\}\s*;\s*:",   # fork bomb (tolerant of spaces)
