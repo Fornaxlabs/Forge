@@ -8,6 +8,7 @@ Covers the translation boundary only — no external harness is required:
 - forge-init --harness stamps the matching adapter config with the plugin
   path substituted (and default/claude behavior is unchanged).
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -31,39 +32,70 @@ _PLUGIN_ROOT = str(Path(__file__).resolve().parent.parent)
 
 # --- _extract: one payload shape per documented harness ---------------------
 
-@pytest.mark.parametrize("payload,expect", [
-    # Claude Code (native; also Codex CLI, AWS Kiro, Cline — same shape)
-    ({"tool_name": "Bash", "tool_input": {"command": "ls -la"}, "agent_id": "a1"},
-     {"command": "ls -la", "tool_name": "Bash", "agent_id": "a1"}),
-    # Gemini CLI / camelCase harnesses
-    ({"toolName": "run_shell_command", "toolInput": {"command": "git status"}, "agentId": "g7"},
-     {"command": "git status", "tool_name": "run_shell_command", "agent_id": "g7"}),
-    # params-style nesting
-    ({"tool": "shell", "params": {"command": "make build"}},
-     {"command": "make build", "tool_name": "shell", "agent_id": ""}),
-    # arguments-style nesting
-    ({"arguments": {"command": "pytest -q"}, "tool": "bash"},
-     {"command": "pytest -q", "tool_name": "bash", "agent_id": ""}),
-    # bare top-level command (last resort)
-    ({"command": "echo hi"},
-     {"command": "echo hi", "tool_name": "", "agent_id": ""}),
-    # agent field variant
-    ({"tool_input": {"command": "ls"}, "agent": "sub-2"},
-     {"command": "ls", "tool_name": "", "agent_id": "sub-2"}),
-])
+
+@pytest.mark.parametrize(
+    "payload,expect",
+    [
+        # Claude Code (native; also Codex CLI, AWS Kiro, Cline — same shape)
+        (
+            {
+                "tool_name": "Bash",
+                "tool_input": {"command": "ls -la"},
+                "agent_id": "a1",
+            },
+            {"command": "ls -la", "tool_name": "Bash", "agent_id": "a1"},
+        ),
+        # Gemini CLI / camelCase harnesses
+        (
+            {
+                "toolName": "run_shell_command",
+                "toolInput": {"command": "git status"},
+                "agentId": "g7",
+            },
+            {
+                "command": "git status",
+                "tool_name": "run_shell_command",
+                "agent_id": "g7",
+            },
+        ),
+        # params-style nesting
+        (
+            {"tool": "shell", "params": {"command": "make build"}},
+            {"command": "make build", "tool_name": "shell", "agent_id": ""},
+        ),
+        # arguments-style nesting
+        (
+            {"arguments": {"command": "pytest -q"}, "tool": "bash"},
+            {"command": "pytest -q", "tool_name": "bash", "agent_id": ""},
+        ),
+        # bare top-level command (last resort)
+        (
+            {"command": "echo hi"},
+            {"command": "echo hi", "tool_name": "", "agent_id": ""},
+        ),
+        # agent field variant
+        (
+            {"tool_input": {"command": "ls"}, "agent": "sub-2"},
+            {"command": "ls", "tool_name": "", "agent_id": "sub-2"},
+        ),
+    ],
+)
 def test_extract_known_shapes(payload, expect):
     got = guard._extract(payload)
     # compare on the keys each case declares (extract also returns file_path, tested below)
     assert {k: got[k] for k in expect} == expect
 
 
-@pytest.mark.parametrize("payload", [
-    {},                                          # nothing at all
-    {"tool_input": "not-a-dict"},                # container is not a dict
-    {"tool_input": {"command": 5}},              # command is not a string
-    {"tool_input": {"file_path": "x.py"}},       # non-command tool (Edit/Write)
-    {"tool_name": 7, "agent_id": None},          # foreign types everywhere
-])
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},  # nothing at all
+        {"tool_input": "not-a-dict"},  # container is not a dict
+        {"tool_input": {"command": 5}},  # command is not a string
+        {"tool_input": {"file_path": "x.py"}},  # non-command tool (Edit/Write)
+        {"tool_name": 7, "agent_id": None},  # foreign types everywhere
+    ],
+)
 def test_extract_degrades_to_empty(payload):
     assert guard._extract(payload)["command"] == ""
 
@@ -73,18 +105,22 @@ def test_extract_nested_container_wins_over_bare_command():
     assert got["command"] == "inner"
 
 
-@pytest.mark.parametrize("payload,expected", [
-    ({"tool_input": {"file_path": "hooks/guard.py"}}, "hooks/guard.py"),
-    ({"toolInput": {"filePath": "a/b.py"}}, "a/b.py"),
-    ({"params": {"path": "c.py"}}, "c.py"),
-    ({"tool_input": {"notebook_path": "nb.ipynb"}}, "nb.ipynb"),
-    ({"tool_input": {"command": "ls"}}, ""),   # no file target
-])
+@pytest.mark.parametrize(
+    "payload,expected",
+    [
+        ({"tool_input": {"file_path": "hooks/guard.py"}}, "hooks/guard.py"),
+        ({"toolInput": {"filePath": "a/b.py"}}, "a/b.py"),
+        ({"params": {"path": "c.py"}}, "c.py"),
+        ({"tool_input": {"notebook_path": "nb.ipynb"}}, "nb.ipynb"),
+        ({"tool_input": {"command": "ls"}}, ""),  # no file target
+    ],
+)
 def test_extract_reads_file_path_across_harnesses(payload, expected):
     assert guard._extract(payload)["file_path"] == expected
 
 
 # --- exit-2 mode (default): the Claude Code contract, for every shape -------
+
 
 def _main(monkeypatch, payload: str, argv: list[str] | None = None) -> int:
     monkeypatch.setattr("sys.stdin", io.StringIO(payload))
@@ -92,13 +128,22 @@ def _main(monkeypatch, payload: str, argv: list[str] | None = None) -> int:
     return guard.main()
 
 
-@pytest.mark.parametrize("payload", [
-    {"tool_name": "Bash", "tool_input": {"command": "rm -rf /"}},          # CC/Codex/Kiro/Cline
-    {"toolName": "run_shell_command", "toolInput": {"command": "rm -rf /"}},  # Gemini
-    {"tool": "shell", "params": {"command": "rm -rf /"}},
-    {"arguments": {"command": "rm -rf /"}},
-    {"command": "rm -rf /"},
-])
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": "rm -rf /"},
+        },  # CC/Codex/Kiro/Cline
+        {
+            "toolName": "run_shell_command",
+            "toolInput": {"command": "rm -rf /"},
+        },  # Gemini
+        {"tool": "shell", "params": {"command": "rm -rf /"}},
+        {"arguments": {"command": "rm -rf /"}},
+        {"command": "rm -rf /"},
+    ],
+)
 def test_denied_exits_2_for_every_shape(monkeypatch, capsys, payload):
     monkeypatch.delenv("FORGE_BLOCK_MODE", raising=False)
     assert _main(monkeypatch, json.dumps(payload)) == 2
@@ -107,17 +152,21 @@ def test_denied_exits_2_for_every_shape(monkeypatch, capsys, payload):
     assert captured.out == ""  # exit-2 mode never writes stdout
 
 
-@pytest.mark.parametrize("payload", [
-    {"tool_name": "Bash", "tool_input": {"command": "ls -la"}},
-    {"toolName": "run_shell_command", "toolInput": {"command": "git status"}},
-    {"command": "pytest -q"},
-])
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"tool_name": "Bash", "tool_input": {"command": "ls -la"}},
+        {"toolName": "run_shell_command", "toolInput": {"command": "git status"}},
+        {"command": "pytest -q"},
+    ],
+)
 def test_safe_allows_for_every_shape(monkeypatch, payload):
     monkeypatch.delenv("FORGE_BLOCK_MODE", raising=False)
     assert _main(monkeypatch, json.dumps(payload)) == 0
 
 
 # --- json mode: deny-JSON on stdout, exit 0 ---------------------------------
+
 
 def _deny_json(capsys) -> dict:
     out = capsys.readouterr().out
@@ -167,10 +216,17 @@ def test_unrecognized_mode_falls_back_to_exit2(monkeypatch, capsys):
 def test_json_mode_ceiling_breach_emits_deny_json(tmp_path, monkeypatch, capsys):
     home = tmp_path / ".forge"
     home.mkdir()
-    (home / "active_run.json").write_text(json.dumps({
-        "run_id": "r", "path": "x", "started_at": time.time(),
-        "tool_calls": 5, "ceiling": 3,
-    }))
+    (home / "active_run.json").write_text(
+        json.dumps(
+            {
+                "run_id": "r",
+                "path": "x",
+                "started_at": time.time(),
+                "tool_calls": 5,
+                "ceiling": 3,
+            }
+        )
+    )
     monkeypatch.setenv("FORGE_HOME", str(home))
     monkeypatch.setenv("FORGE_BLOCK_MODE", "json")
     payload = json.dumps({"tool_name": "Edit", "tool_input": {"file_path": "a.py"}})
@@ -186,6 +242,7 @@ def test_json_mode_fails_open_on_bad_stdin(monkeypatch, capsys):
 
 # --- Claude Code path regression: decide() ignores mode entirely ------------
 
+
 def test_decide_is_mode_immune(monkeypatch, capsys):
     # Even with json mode ambient, decide() (the CC entry) still exits 2 + stderr.
     monkeypatch.setenv("FORGE_BLOCK_MODE", "json")
@@ -197,10 +254,13 @@ def test_decide_is_mode_immune(monkeypatch, capsys):
 
 # --- forge-init --harness ----------------------------------------------------
 
+
 def _init(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["bash", str(_INIT), *args, str(tmp_path)],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
 
 
@@ -211,9 +271,9 @@ def test_forge_init_harness_codex_stamps_substituted_config(tmp_path):
     assert stamped.is_file()
     cfg = json.loads(stamped.read_text())
     command = cfg["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
-    assert "__FORGE_PLUGIN_ROOT__" not in command       # placeholder substituted
+    assert "__FORGE_PLUGIN_ROOT__" not in command  # placeholder substituted
     assert f"{_PLUGIN_ROOT}/hooks/guard.py" in command  # absolute path to THE guard
-    assert "NOT yet validated" in result.stdout          # honesty note printed
+    assert "NOT yet validated" in result.stdout  # honesty note printed
 
 
 def test_forge_init_harness_kiro_stamps_hook_file(tmp_path):
@@ -229,8 +289,10 @@ def test_forge_init_default_is_claude_and_unchanged(tmp_path):
     assert result.returncode == 0, result.stderr
     assert "harness:   claude" in result.stdout
     for leftover in (".codex", ".gemini", ".grok", ".cline", ".kiro", ".agents"):
-        assert not (tmp_path / leftover).exists()  # no adapter noise on the default path
-    assert (tmp_path / "CLAUDE.md").is_file()      # the classic stamps still land
+        assert not (
+            tmp_path / leftover
+        ).exists()  # no adapter noise on the default path
+    assert (tmp_path / "CLAUDE.md").is_file()  # the classic stamps still land
 
 
 def test_forge_init_rejects_unknown_harness(tmp_path):

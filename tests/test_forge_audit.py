@@ -1,4 +1,5 @@
 """Tests for status/forge_audit.py — compliance audit export from traces."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -21,8 +22,15 @@ def _events(*evs):
 
 
 def _run(**over):
-    base = {"ts": "2026-07-24T10:00:00", "run_id": "r1", "event": "run_start",
-            "task": "add auth", "triage": "MEDIUM", "git_ref": "abc", "scope": ["app.py"]}
+    base = {
+        "ts": "2026-07-24T10:00:00",
+        "run_id": "r1",
+        "event": "run_start",
+        "task": "add auth",
+        "triage": "MEDIUM",
+        "git_ref": "abc",
+        "scope": ["app.py"],
+    }
     base.update(over)
     return base
 
@@ -49,45 +57,59 @@ def test_audit_run_extracts_governance_signals():
 
 
 def test_effective_tier_reflects_retriage():
-    evs = _events(_run(triage="MEDIUM"),
-                  {"event": "retriage", "from": "MEDIUM", "to": "LARGE"},
-                  {"event": "verify", "passed": True},
-                  {"event": "run_end", "outcome": "green"})
+    evs = _events(
+        _run(triage="MEDIUM"),
+        {"event": "retriage", "from": "MEDIUM", "to": "LARGE"},
+        {"event": "verify", "passed": True},
+        {"event": "run_end", "outcome": "green"},
+    )
     r = fa.audit_run(evs)
     assert r is not None
-    assert r.triage == "LARGE"          # effective, not initial
+    assert r.triage == "LARGE"  # effective, not initial
     assert r.retriaged is True
 
 
 def test_forced_close_is_not_verified():
-    evs = _events(_run(),
-                  {"event": "verify", "passed": True},
-                  {"event": "unverified_close", "outcome": "green", "note": "hotfix"},
-                  {"event": "run_end", "outcome": "green"})
+    evs = _events(
+        _run(),
+        {"event": "verify", "passed": True},
+        {"event": "unverified_close", "outcome": "green", "note": "hotfix"},
+        {"event": "run_end", "outcome": "green"},
+    )
     r = fa.audit_run(evs)
     assert r is not None
     assert r.forced_close is True
-    assert r.verified is False          # a forced close never counts as verified
+    assert r.verified is False  # a forced close never counts as verified
 
 
 def test_verified_requires_verify_event_and_no_force():
     r = fa.audit_run(_events(_run(), {"event": "run_end", "outcome": "green"}))
-    assert r is not None and r.verified is False   # no verify event
+    assert r is not None and r.verified is False  # no verify event
 
 
 def test_collect_and_summarize(tmp_path):
     runs_dir = tmp_path / ".forge" / "runs"
     runs_dir.mkdir(parents=True)
-    (runs_dir / "a.jsonl").write_text("\n".join(json.dumps(e) for e in _events(
-        _run(run_id="a"),
-        {"event": "stage", "approved_by": "human"},
-        {"event": "verify", "passed": True},
-        {"event": "run_end", "outcome": "green"},
-    )))
-    (runs_dir / "b.jsonl").write_text("\n".join(json.dumps(e) for e in _events(
-        _run(run_id="b", triage="LARGE"),
-        {"event": "run_end", "outcome": "abandoned"},
-    )))
+    (runs_dir / "a.jsonl").write_text(
+        "\n".join(
+            json.dumps(e)
+            for e in _events(
+                _run(run_id="a"),
+                {"event": "stage", "approved_by": "human"},
+                {"event": "verify", "passed": True},
+                {"event": "run_end", "outcome": "green"},
+            )
+        )
+    )
+    (runs_dir / "b.jsonl").write_text(
+        "\n".join(
+            json.dumps(e)
+            for e in _events(
+                _run(run_id="b", triage="LARGE"),
+                {"event": "run_end", "outcome": "abandoned"},
+            )
+        )
+    )
     runs = fa.collect(str(runs_dir))
     assert len(runs) == 2
     s = fa.summarize(runs)
@@ -105,8 +127,16 @@ def test_read_events_skips_garbage(tmp_path):
 def test_main_markdown_and_json(tmp_path, capsys, monkeypatch):
     runs_dir = tmp_path / ".forge" / "runs"
     runs_dir.mkdir(parents=True)
-    (runs_dir / "a.jsonl").write_text("\n".join(json.dumps(e) for e in _events(
-        _run(run_id="a"), {"event": "verify"}, {"event": "run_end", "outcome": "green"})))
+    (runs_dir / "a.jsonl").write_text(
+        "\n".join(
+            json.dumps(e)
+            for e in _events(
+                _run(run_id="a"),
+                {"event": "verify"},
+                {"event": "run_end", "outcome": "green"},
+            )
+        )
+    )
     assert fa.main([str(tmp_path)], now=T0) == 0
     assert "FORGE governance audit" in capsys.readouterr().out
     assert fa.main([str(tmp_path), "--json"], now=T0) == 0

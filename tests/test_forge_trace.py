@@ -1,4 +1,5 @@
 """Tests for traces/forge_trace.py — run lifecycle + JSONL events."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -21,11 +22,21 @@ def _lines(home: Path):
 
 def test_full_lifecycle(tmp_path, monkeypatch):
     monkeypatch.setenv("FORGE_HOME", str(tmp_path))
-    assert ft.main(["start", "--task", "add auth", "--triage", "LARGE",
-                    "--git-ref", "abc123"], now=T0) == 0
+    assert (
+        ft.main(
+            ["start", "--task", "add auth", "--triage", "LARGE", "--git-ref", "abc123"],
+            now=T0,
+        )
+        == 0
+    )
     assert (tmp_path / "active_run.json").exists()
-    assert ft.main(["log", "--event", "review",
-                    "--json", '{"iteration": 1, "findings": []}'], now=T0) == 0
+    assert (
+        ft.main(
+            ["log", "--event", "review", "--json", '{"iteration": 1, "findings": []}'],
+            now=T0,
+        )
+        == 0
+    )
     assert ft.main(["end", "--outcome", "green", "--iterations", "2"], now=T0) == 0
     # active run cleared on end
     assert not (tmp_path / "active_run.json").exists()
@@ -45,8 +56,20 @@ def test_full_lifecycle(tmp_path, monkeypatch):
 
 def test_start_writes_ceiling_into_active(tmp_path, monkeypatch):
     monkeypatch.setenv("FORGE_HOME", str(tmp_path))
-    ft.main(["start", "--task", "t", "--triage", "SMALL",
-             "--git-ref", "r", "--ceiling", "12"], now=T0)
+    ft.main(
+        [
+            "start",
+            "--task",
+            "t",
+            "--triage",
+            "SMALL",
+            "--git-ref",
+            "r",
+            "--ceiling",
+            "12",
+        ],
+        now=T0,
+    )
     active = json.loads((tmp_path / "active_run.json").read_text())
     assert active["ceiling"] == 12
     assert active["tool_calls"] == 0
@@ -59,8 +82,14 @@ def test_log_without_active_run_returns_1(tmp_path, monkeypatch):
 
 def test_slug_override(tmp_path, monkeypatch):
     monkeypatch.setenv("FORGE_HOME", str(tmp_path))
-    rid = ft.start(task="a very long task description that would be truncated",
-                   triage="MEDIUM", git_ref="r", ceiling=40, slug="short", now=T0)
+    rid = ft.start(
+        task="a very long task description that would be truncated",
+        triage="MEDIUM",
+        git_ref="r",
+        ceiling=40,
+        slug="short",
+        now=T0,
+    )
     assert rid == "2023-11-14-221320-short"
 
 
@@ -74,8 +103,16 @@ def test_log_rejects_non_object_json(tmp_path, monkeypatch):
 
 def test_record_blocker_increments_and_enforces(tmp_path, monkeypatch):
     import json as _j
+
     monkeypatch.setenv("FORGE_HOME", str(tmp_path))
-    ft.start(task="add refund", triage="MEDIUM", git_ref="HEAD", ceiling=40, slug="r", now=1000.0)
+    ft.start(
+        task="add refund",
+        triage="MEDIUM",
+        git_ref="HEAD",
+        ceiling=40,
+        slug="r",
+        now=1000.0,
+    )
     assert ft.record_blocker("authz", now=1001.0) == 1
     assert ft.record_blocker("authz", now=1002.0) == 2
     assert ft.record_blocker("other", now=1003.0) == 1
@@ -86,10 +123,23 @@ def test_record_blocker_increments_and_enforces(tmp_path, monkeypatch):
 
 # --- 2026-07-20: scope declaration (assumption guard, build-time) ---
 
+
 def test_start_persists_scope(tmp_path, monkeypatch):
     monkeypatch.setenv("FORGE_HOME", str(tmp_path))
-    ft.main(["start", "--task", "t", "--triage", "SMALL", "--git-ref", "r",
-             "--scope", "hooks/*, tests/test_guard.py"], now=T0)
+    ft.main(
+        [
+            "start",
+            "--task",
+            "t",
+            "--triage",
+            "SMALL",
+            "--git-ref",
+            "r",
+            "--scope",
+            "hooks/*, tests/test_guard.py",
+        ],
+        now=T0,
+    )
     active = json.loads((tmp_path / "active_run.json").read_text())
     assert active["scope"] == ["hooks/*", "tests/test_guard.py"]
     assert _lines(tmp_path)[0]["scope"] == ["hooks/*", "tests/test_guard.py"]
@@ -97,8 +147,20 @@ def test_start_persists_scope(tmp_path, monkeypatch):
 
 def test_scope_add_widens_and_logs(tmp_path, monkeypatch):
     monkeypatch.setenv("FORGE_HOME", str(tmp_path))
-    ft.main(["start", "--task", "t", "--triage", "SMALL", "--git-ref", "r",
-             "--scope", "hooks/*"], now=T0)
+    ft.main(
+        [
+            "start",
+            "--task",
+            "t",
+            "--triage",
+            "SMALL",
+            "--git-ref",
+            "r",
+            "--scope",
+            "hooks/*",
+        ],
+        now=T0,
+    )
     assert ft.main(["scope", "--add", "traces/*"], now=T0) == 0
     active = json.loads((tmp_path / "active_run.json").read_text())
     assert active["scope"] == ["hooks/*", "traces/*"]
@@ -107,21 +169,48 @@ def test_scope_add_widens_and_logs(tmp_path, monkeypatch):
 
 def test_scope_set_replaces(tmp_path, monkeypatch):
     monkeypatch.setenv("FORGE_HOME", str(tmp_path))
-    ft.main(["start", "--task", "t", "--triage", "SMALL", "--git-ref", "r",
-             "--scope", "hooks/*"], now=T0)
+    ft.main(
+        [
+            "start",
+            "--task",
+            "t",
+            "--triage",
+            "SMALL",
+            "--git-ref",
+            "r",
+            "--scope",
+            "hooks/*",
+        ],
+        now=T0,
+    )
     ft.main(["scope", "--set", "docs/*"], now=T0)
     assert json.loads((tmp_path / "active_run.json").read_text())["scope"] == ["docs/*"]
 
 
 def test_scope_add_dedupes(tmp_path, monkeypatch):
     monkeypatch.setenv("FORGE_HOME", str(tmp_path))
-    ft.main(["start", "--task", "t", "--triage", "SMALL", "--git-ref", "r",
-             "--scope", "hooks/*"], now=T0)
+    ft.main(
+        [
+            "start",
+            "--task",
+            "t",
+            "--triage",
+            "SMALL",
+            "--git-ref",
+            "r",
+            "--scope",
+            "hooks/*",
+        ],
+        now=T0,
+    )
     ft.main(["scope", "--add", "hooks/*"], now=T0)
-    assert json.loads((tmp_path / "active_run.json").read_text())["scope"] == ["hooks/*"]
+    assert json.loads((tmp_path / "active_run.json").read_text())["scope"] == [
+        "hooks/*"
+    ]
 
 
 # --- 2026-07-20: definition-of-done gate — success requires verification ---
+
 
 def test_end_success_without_verification_refused(tmp_path, monkeypatch):
     monkeypatch.setenv("FORGE_HOME", str(tmp_path))
@@ -150,7 +239,9 @@ def test_end_failed_verify_event_does_not_count(tmp_path, monkeypatch):
     monkeypatch.setenv("FORGE_HOME", str(tmp_path))
     ft.main(["start", "--task", "t", "--triage", "SMALL", "--git-ref", "r"], now=T0)
     ft.main(["log", "--event", "test", "--json", '{"passed": false}'], now=T0)
-    assert ft.main(["end", "--outcome", "success"], now=T0) == 1  # a failed check is not proof
+    assert (
+        ft.main(["end", "--outcome", "success"], now=T0) == 1
+    )  # a failed check is not proof
 
 
 def test_end_non_success_outcome_not_gated(tmp_path, monkeypatch):
@@ -163,13 +254,19 @@ def test_end_non_success_outcome_not_gated(tmp_path, monkeypatch):
 def test_end_force_overrides_but_logs_assumption(tmp_path, monkeypatch):
     monkeypatch.setenv("FORGE_HOME", str(tmp_path))
     ft.main(["start", "--task", "t", "--triage", "SMALL", "--git-ref", "r"], now=T0)
-    assert ft.main(["end", "--outcome", "done", "--force", "--note", "hotfix"], now=T0) == 0
+    assert (
+        ft.main(["end", "--outcome", "done", "--force", "--note", "hotfix"], now=T0)
+        == 0
+    )
     events = _lines(tmp_path)
-    assert any(e["event"] == "unverified_close" and e["note"] == "hotfix" for e in events)
+    assert any(
+        e["event"] == "unverified_close" and e["note"] == "hotfix" for e in events
+    )
     assert events[-1]["event"] == "run_end"
 
 
 # --- 2026-07-30: ENFORCEABLE verification independence (Forge original) ---
+
 
 def test_model_family_maps_vendors():
     assert ft.model_family("claude-opus-5") == "anthropic"
@@ -183,18 +280,46 @@ def test_independence_levels():
         return [{"event": "verify", "passed": True, "author": a, "verifier": b}]
 
     assert ft.verification_independence(v("claude-opus-5", "gpt-5.6")) == "cross-family"
-    assert ft.verification_independence(v("claude-opus-5", "claude-sonnet-5")) == "same-family"
-    assert ft.verification_independence([{"event": "verify", "passed": True}]) == "unlabelled"
+    assert (
+        ft.verification_independence(v("claude-opus-5", "claude-sonnet-5"))
+        == "same-family"
+    )
+    assert (
+        ft.verification_independence([{"event": "verify", "passed": True}])
+        == "unlabelled"
+    )
     assert ft.verification_independence([]) == "none"
     # a FAILED cross-family check is not evidence of success
-    assert ft.verification_independence(
-        [{"event": "verify", "passed": False, "author": "claude-opus-5", "verifier": "gpt-5"}]
-    ) == "none"
+    assert (
+        ft.verification_independence(
+            [
+                {
+                    "event": "verify",
+                    "passed": False,
+                    "author": "claude-opus-5",
+                    "verifier": "gpt-5",
+                }
+            ]
+        )
+        == "none"
+    )
 
 
 def test_independence_takes_the_best_available():
-    evs = [{"event": "verify", "passed": True, "author": "claude-opus-5", "verifier": "claude-opus-5"},
-           {"event": "verify", "passed": True, "author": "claude-opus-5", "verifier": "gpt-5.6"}]
+    evs = [
+        {
+            "event": "verify",
+            "passed": True,
+            "author": "claude-opus-5",
+            "verifier": "claude-opus-5",
+        },
+        {
+            "event": "verify",
+            "passed": True,
+            "author": "claude-opus-5",
+            "verifier": "gpt-5.6",
+        },
+    ]
     assert ft.verification_independence(evs) == "cross-family"
 
 
@@ -202,19 +327,43 @@ def test_strict_mode_refuses_same_family_close(tmp_path, monkeypatch):
     monkeypatch.setenv("FORGE_HOME", str(tmp_path))
     monkeypatch.setenv("FORGE_REQUIRE_CROSS_FAMILY", "1")
     ft.main(["start", "--task", "t", "--triage", "SMALL", "--git-ref", "r"], now=T0)
-    ft.main(["log", "--event", "verify",
-             "--json", '{"passed":true,"author":"claude-opus-5","verifier":"claude-sonnet-5"}'], now=T0)
-    assert ft.main(["end", "--outcome", "green"], now=T0) == 1      # refused
-    ft.main(["log", "--event", "verify",
-             "--json", '{"passed":true,"author":"claude-opus-5","verifier":"gpt-5.6"}'], now=T0)
-    assert ft.main(["end", "--outcome", "green"], now=T0) == 0      # cross-family accepted
+    ft.main(
+        [
+            "log",
+            "--event",
+            "verify",
+            "--json",
+            '{"passed":true,"author":"claude-opus-5","verifier":"claude-sonnet-5"}',
+        ],
+        now=T0,
+    )
+    assert ft.main(["end", "--outcome", "green"], now=T0) == 1  # refused
+    ft.main(
+        [
+            "log",
+            "--event",
+            "verify",
+            "--json",
+            '{"passed":true,"author":"claude-opus-5","verifier":"gpt-5.6"}',
+        ],
+        now=T0,
+    )
+    assert ft.main(["end", "--outcome", "green"], now=T0) == 0  # cross-family accepted
 
 
 def test_default_mode_labels_without_blocking(tmp_path, monkeypatch):
     monkeypatch.setenv("FORGE_HOME", str(tmp_path))
     monkeypatch.delenv("FORGE_REQUIRE_CROSS_FAMILY", raising=False)
     ft.main(["start", "--task", "t", "--triage", "SMALL", "--git-ref", "r"], now=T0)
-    ft.main(["log", "--event", "verify",
-             "--json", '{"passed":true,"author":"claude-opus-5","verifier":"claude-opus-5"}'], now=T0)
+    ft.main(
+        [
+            "log",
+            "--event",
+            "verify",
+            "--json",
+            '{"passed":true,"author":"claude-opus-5","verifier":"claude-opus-5"}',
+        ],
+        now=T0,
+    )
     assert ft.main(["end", "--outcome", "green"], now=T0) == 0
-    assert _lines(tmp_path)[-1]["independence"] == "same-family"    # recorded, not hidden
+    assert _lines(tmp_path)[-1]["independence"] == "same-family"  # recorded, not hidden

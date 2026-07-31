@@ -9,6 +9,7 @@ It NEVER blocks a session (always exit 0) and never raises — a banner must not
 to wedge startup. The authoritative check is still `/forge:forge-doctor`; this is the
 glanceable "is it on?" signal, pointing you there to verify.
 """
+
 from __future__ import annotations
 
 import json
@@ -39,7 +40,10 @@ def guard_wired(root: str) -> bool:
             cmd = hook.get("command", "") if isinstance(hook, dict) else ""
             # basename match on a bare `python <path>/guard.py` — a `curl …/guard.py|sh`
             # would still slip past this loose check, which is why we point at forge-doctor
-            if os.path.basename(cmd.split('"')[-2] if '"' in cmd else cmd.split()[-1]) == "guard.py":
+            if (
+                os.path.basename(cmd.split('"')[-2] if '"' in cmd else cmd.split()[-1])
+                == "guard.py"
+            ):
                 return True
     return False
 
@@ -81,7 +85,9 @@ def arm_session_run() -> str:
         home = _forge_home()
         parent = os.path.dirname(os.path.abspath(home))
         # RULE 1: only arm inside something that looks like a project.
-        if parent == os.path.expanduser("~") or not os.path.isdir(os.path.join(parent, ".git")):
+        if parent == os.path.expanduser("~") or not os.path.isdir(
+            os.path.join(parent, ".git")
+        ):
             return "skipped"
         path = os.path.join(home, "active_run.json")
         if os.path.exists(path):
@@ -89,25 +95,46 @@ def arm_session_run() -> str:
                 with open(path) as fh:
                     existing = json.load(fh)
                 if not (isinstance(existing, dict) and existing.get("ad_hoc")):
-                    return "existing"          # a real /forge run — leave it alone
+                    return "existing"  # a real /forge run — leave it alone
             except (OSError, ValueError):
-                pass                            # corrupt -> replace it below
+                pass  # corrupt -> replace it below
             # RULE 2: stale ad-hoc run from a previous session -> start a fresh counter.
         now = time.time()
         run_id = time.strftime("%Y-%m-%d-%H%M%S-session", time.gmtime(now))
         os.makedirs(os.path.join(home, "runs"), exist_ok=True)
         run_path = os.path.join(home, "runs", f"{run_id}.jsonl")
         with open(run_path, "a") as fh:
-            fh.write(json.dumps({
-                "ts": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(now)),
-                "run_id": run_id, "event": "run_start", "task": "ad-hoc session",
-                "triage": "SMALL", "git_ref": "", "scope": [], "ad_hoc": True,
-            }) + "\n")
+            fh.write(
+                json.dumps(
+                    {
+                        "ts": time.strftime(
+                            "%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(now)
+                        ),
+                        "run_id": run_id,
+                        "event": "run_start",
+                        "task": "ad-hoc session",
+                        "triage": "SMALL",
+                        "git_ref": "",
+                        "scope": [],
+                        "ad_hoc": True,
+                    }
+                )
+                + "\n"
+            )
         with open(path, "w") as fh:
             # RULE 3: generous ceiling — a backstop, not a budget.
-            json.dump({"run_id": run_id, "path": run_path, "started_at": now,
-                       "tool_calls": 0, "scope": [], "ad_hoc": True,
-                       "ceiling": _env_int("FORGE_ADHOC_CEILING", 500)}, fh)
+            json.dump(
+                {
+                    "run_id": run_id,
+                    "path": run_path,
+                    "started_at": now,
+                    "tool_calls": 0,
+                    "scope": [],
+                    "ad_hoc": True,
+                    "ceiling": _env_int("FORGE_ADHOC_CEILING", 500),
+                },
+                fh,
+            )
         return "armed"
     except OSError:
         return ""
@@ -120,8 +147,11 @@ def main() -> int:
         pass
     try:
         if not guard_wired(_root()):
-            print("\u26a0 FORGE loaded but the guard is NOT wired to PreToolUse — this "
-                  "session is NOT enforced. Run /forge:forge-doctor.", file=sys.stderr)
+            print(
+                "\u26a0 FORGE loaded but the guard is NOT wired to PreToolUse — this "
+                "session is NOT enforced. Run /forge:forge-doctor.",
+                file=sys.stderr,
+            )
             return 0
         state = arm_session_run()
         if state == "skipped":
@@ -129,12 +159,17 @@ def main() -> int:
         elif state == "existing":
             extra = "run active — scope + done-gate live"
         elif state == "armed":
-            extra = ("session run armed — ceiling + loop cap live; "
-                     "scope + done-gate need /forge <task>")
+            extra = (
+                "session run armed — ceiling + loop cap live; "
+                "scope + done-gate need /forge <task>"
+            )
         else:
             extra = "run state unavailable — only the deny-list is live"
-        print(f"\U0001f528 FORGE active — deny-list armed \u00b7 {extra}. "
-              "Verify: /forge:forge-doctor", file=sys.stderr)
+        print(
+            f"\U0001f528 FORGE active — deny-list armed \u00b7 {extra}. "
+            "Verify: /forge:forge-doctor",
+            file=sys.stderr,
+        )
     except Exception:  # noqa: BLE001,S110 — deliberate: never wedge startup
         pass
     return 0

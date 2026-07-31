@@ -5,6 +5,7 @@ skipping the slow probes), so every level decision below is the real logic.
 Only _self_audit_ok is monkeypatched — it subprocesses the full self-audit,
 which is covered by its own test suite.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -22,37 +23,78 @@ _spec.loader.exec_module(fc)
 
 _REAL_SELF_AUDIT = fc._self_audit_ok  # kept before the autouse fixture patches it
 
-_CLAIM_NAMES = ["enforcement-armed", "secrets-clean", "ci-green",
-                "deps-no-known-cves", "governance-intact"]
+_CLAIM_NAMES = [
+    "enforcement-armed",
+    "secrets-clean",
+    "ci-green",
+    "deps-no-known-cves",
+    "governance-intact",
+]
 
 
-def _status(*, armed: bool = True, clean: bool = True, ci: str = "success",
-            kv: object = 0, runs: int = 0, connected: bool = True) -> dict[str, Any]:
+def _status(
+    *,
+    armed: bool = True,
+    clean: bool = True,
+    ci: str = "success",
+    kv: object = 0,
+    runs: int = 0,
+    connected: bool = True,
+) -> dict[str, Any]:
     return {
-        "project": "proj", "path": "/tmp/proj",
+        "project": "proj",
+        "path": "/tmp/proj",
         "collected_at": "2026-07-18T00:00:00+00:00",
-        "git": {"branch": "main", "last_commit": "x", "last_commit_ago": "1h",
-                "uncommitted_files": 0, "has_remote": True,
-                "remote": "git@example.invalid:x/y.git"},
-        "github": ({"connected": True, "open_prs": 0, "pr_titles": [],
-                    "latest_ci": ci, "ci_commit": "abcdef123456"}
-                   if connected else {"connected": False, "reason": "gh not installed"}),
-        "secrets": {"tool": "gitleaks", "scope": "full history",
-                    "findings": 0 if clean else 2, "noise_excluded": 0,
-                    "clean": clean, "allowlist": True, "pre_push_gate": armed},
-        "enforcement": {"pre_commit_config": armed, "pre_commit_installed": armed,
-                        "pre_push_gate": armed, "ci_workflow": armed,
-                        "gitleaks_allowlist": armed, "plan_mode_first": armed},
+        "git": {
+            "branch": "main",
+            "last_commit": "x",
+            "last_commit_ago": "1h",
+            "uncommitted_files": 0,
+            "has_remote": True,
+            "remote": "git@example.invalid:x/y.git",
+        },
+        "github": (
+            {
+                "connected": True,
+                "open_prs": 0,
+                "pr_titles": [],
+                "latest_ci": ci,
+                "ci_commit": "abcdef123456",
+            }
+            if connected
+            else {"connected": False, "reason": "gh not installed"}
+        ),
+        "secrets": {
+            "tool": "gitleaks",
+            "scope": "full history",
+            "findings": 0 if clean else 2,
+            "noise_excluded": 0,
+            "clean": clean,
+            "allowlist": True,
+            "pre_push_gate": armed,
+        },
+        "enforcement": {
+            "pre_commit_config": armed,
+            "pre_commit_installed": armed,
+            "pre_push_gate": armed,
+            "ci_workflow": armed,
+            "gitleaks_allowlist": armed,
+            "plan_mode_first": armed,
+        },
         "tests": {"test_files": 1, "coverage": "not measured"},
-        "deps": {"manifest": None if kv == "no python manifest" else "pyproject.toml",
-                 "known_vulns": kv},
+        "deps": {
+            "manifest": None if kv == "no python manifest" else "pyproject.toml",
+            "known_vulns": kv,
+        },
         "forge": {"installed": True, "governed_runs": runs, "note": None},
     }
 
 
 @pytest.fixture(autouse=True)
 def _audit_ok(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(fc, "_self_audit_ok", lambda: (True, "self-audit: all gates OK"))
+    monkeypatch.setattr(
+        fc, "_self_audit_ok", lambda: (True, "self-audit: all gates OK")
+    )
 
 
 def test_l2_all_green_no_governed_runs(tmp_path: Path) -> None:
@@ -84,9 +126,11 @@ def test_secrets_scan_error_blocks_l2(tmp_path: Path) -> None:
     """A failed/unknown secrets scan (status record, no 'clean' key) must never
     count as secrets-clean: the certificate stays at L1, not L2."""
     status = _status()
-    status["secrets"] = {"tool": "gitleaks",
-                         "status": "error (rc 1) (scope: full history)",
-                         "scope": "full history"}
+    status["secrets"] = {
+        "tool": "gitleaks",
+        "status": "error (rc 1) (scope: full history)",
+        "scope": "full history",
+    }
     cert = fc.certify(str(tmp_path), status=status)
     assert cert["level"] == "L1"
     by_name = {c["name"]: c for c in cert["claims"]}
@@ -123,13 +167,16 @@ def test_deps_no_manifest_passes(tmp_path: Path) -> None:
     assert "nothing to audit" in by_name["deps-no-known-cves"]["evidence"]
 
 
-@pytest.mark.parametrize("kv", [
-    "pip-audit not installed",
-    "timed out (deps not resolvable offline)",
-    "see pip-audit",
-    "could not resolve",
-    3,
-])
+@pytest.mark.parametrize(
+    "kv",
+    [
+        "pip-audit not installed",
+        "timed out (deps not resolvable offline)",
+        "see pip-audit",
+        "could not resolve",
+        3,
+    ],
+)
 def test_deps_error_or_vulns_fail(tmp_path: Path, kv: object) -> None:
     cert = fc.certify(str(tmp_path), status=_status(kv=kv))
     assert cert["level"] == "L1"
@@ -138,9 +185,11 @@ def test_deps_error_or_vulns_fail(tmp_path: Path, kv: object) -> None:
 
 
 def test_tampered_governance_blocks_l2(
-        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(fc, "_self_audit_ok",
-                        lambda: (False, "TAMPERED: guard hook missing"))
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        fc, "_self_audit_ok", lambda: (False, "TAMPERED: guard hook missing")
+    )
     cert = fc.certify(str(tmp_path), status=_status())
     assert cert["level"] == "L1"
     by_name = {c["name"]: c for c in cert["claims"]}
@@ -186,10 +235,10 @@ def test_real_self_audit_passes_on_the_shipped_checkout() -> None:
 # ---------------------------------------------------------------------------
 # CLI surface
 # ---------------------------------------------------------------------------
-def test_main_json_and_human(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-                             capsys: pytest.CaptureFixture[str]) -> None:
-    monkeypatch.setattr(fc.forge_status, "collect",
-                        lambda d, history=False: _status())
+def test_main_json_and_human(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(fc.forge_status, "collect", lambda d, history=False: _status())
     assert fc.main([str(tmp_path), "--json"]) == 0
     cert = json.loads(capsys.readouterr().out)
     assert cert["level"] == "L2"
@@ -203,9 +252,10 @@ def test_main_json_and_human(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 
 
 def test_main_exit_one_when_not_certified(
-        tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str]) -> None:
-    monkeypatch.setattr(fc.forge_status, "collect",
-                        lambda d, history=False: _status(armed=False))
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        fc.forge_status, "collect", lambda d, history=False: _status(armed=False)
+    )
     assert fc.main([str(tmp_path)]) == 1
     assert "not certified" in capsys.readouterr().out

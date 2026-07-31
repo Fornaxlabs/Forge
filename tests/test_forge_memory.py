@@ -1,4 +1,5 @@
 """Unit tests for the FORGE memory CLI. Target: ≥80% coverage."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -114,13 +115,28 @@ def test_now_returns_iso_utc():
 
 # ---- CLI (main) tests ----
 
+
 def test_cli_init_add_search(tmp_path, capsys):
     db = str(tmp_path / "m.db")
     assert fm.main(["--db", db, "init"]) == 0
-    assert fm.main([
-        "--db", db, "add", "--type", "finding",
-        "--topic", "cli topic", "--content", "cli content", "--source", "s",
-    ]) == 0
+    assert (
+        fm.main(
+            [
+                "--db",
+                db,
+                "add",
+                "--type",
+                "finding",
+                "--topic",
+                "cli topic",
+                "--content",
+                "cli content",
+                "--source",
+                "s",
+            ]
+        )
+        == 0
+    )
     assert fm.main(["--db", db, "search", "cli"]) == 0
     out = capsys.readouterr().out
     assert "cli topic" in out
@@ -138,19 +154,41 @@ def test_cli_add_bad_type_returns_error(tmp_path, capsys):
     fm.main(["--db", db, "init"])
     # argparse rejects invalid choice -> SystemExit(2)
     with pytest.raises(SystemExit):
-        fm.main([
-            "--db", db, "add", "--type", "bogus",
-            "--topic", "t", "--content", "c", "--source", "s",
-        ])
+        fm.main(
+            [
+                "--db",
+                db,
+                "add",
+                "--type",
+                "bogus",
+                "--topic",
+                "t",
+                "--content",
+                "c",
+                "--source",
+                "s",
+            ]
+        )
 
 
 def test_cli_add_empty_content_returns_1(tmp_path):
     db = str(tmp_path / "m.db")
     fm.main(["--db", db, "init"])
-    rc = fm.main([
-        "--db", db, "add", "--type", "finding",
-        "--topic", "t", "--content", "   ", "--source", "s",
-    ])
+    rc = fm.main(
+        [
+            "--db",
+            db,
+            "add",
+            "--type",
+            "finding",
+            "--topic",
+            "t",
+            "--content",
+            "   ",
+            "--source",
+            "s",
+        ]
+    )
     assert rc == 1
 
 
@@ -158,10 +196,21 @@ def test_cli_curate(tmp_path, capsys):
     db = str(tmp_path / "m.db")
     fm.main(["--db", db, "init"])
     for _ in range(2):
-        fm.main([
-            "--db", db, "add", "--type", "finding",
-            "--topic", "dup", "--content", "same", "--source", "s",
-        ])
+        fm.main(
+            [
+                "--db",
+                db,
+                "add",
+                "--type",
+                "finding",
+                "--topic",
+                "dup",
+                "--content",
+                "same",
+                "--source",
+                "s",
+            ]
+        )
     fm.main(["--db", db, "curate"])
     assert "duplicates: 2" in capsys.readouterr().out
 

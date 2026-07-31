@@ -49,6 +49,7 @@ Install configs per harness live in adapters/; the honest validation matrix is
 docs/HARNESSES.md. Everything runs THIS one file — there are no per-harness forks
 of the decision logic.
 """
+
 from __future__ import annotations
 
 import fcntl
@@ -69,7 +70,7 @@ _STATIC_DENY = [
     r"\bdd\s+.*\bof=/dev/",
     r"\bdrop\s+(table|database)\b",
     r"\btruncate\s+table\b",
-    r":\s*\(\s*\)\s*\{.*\}\s*;\s*:",   # fork bomb (tolerant of spaces)
+    r":\s*\(\s*\)\s*\{.*\}\s*;\s*:",  # fork bomb (tolerant of spaces)
     r">\s*/dev/sd[a-z]\d*",
     r"\bfind\s+/\s.*-delete\b",
     # Pipe-to-shell: fetching a remote payload straight into an interpreter is
@@ -137,8 +138,10 @@ def _segment_denied(seg: str) -> bool:
     if re.search(r"\brm\b", seg):
         recursive = bool(re.search(r"--recursive|-[a-z]*r", seg))
         force = bool(re.search(r"--force|-[a-z]*f", seg))
-        target = bool(re.search(r"(?:^|[\s=])(?:/|~|/\*)(?:\s|$)", seg)) \
+        target = (
+            bool(re.search(r"(?:^|[\s=])(?:/|~|/\*)(?:\s|$)", seg))
             or "--no-preserve-root" in seg
+        )
         if recursive and force and target:
             return True
     # git push: any force flag OR a '+refspec' (forced update).
@@ -149,7 +152,9 @@ def _segment_denied(seg: str) -> bool:
             return True
     # chmod: recursive 777 on bare root.
     if re.search(r"\bchmod\b", seg) and "777" in seg:
-        if re.search(r"--recursive|-[a-z]*r", seg) and re.search(r"(?:^|[\s=])/(?:\s|$)", seg):
+        if re.search(r"--recursive|-[a-z]*r", seg) and re.search(
+            r"(?:^|[\s=])/(?:\s|$)", seg
+        ):
             return True
     return False
 
@@ -233,7 +238,8 @@ def _extra_patterns() -> list[str]:
     try:
         with open(path) as fh:
             return [
-                ln.strip() for ln in fh
+                ln.strip()
+                for ln in fh
                 if ln.strip() and not ln.lstrip().startswith("#")
             ]
     except OSError:
@@ -283,20 +289,32 @@ def tick_and_check(now: float | None = None) -> bool:
 # FORGE_MAX_AGENTS. Claude Code's 200/session limit is a far looser backstop.
 DEFAULT_MAX_AGENTS = _env_int("FORGE_MAX_AGENTS", 12)
 
+#: Per-subagent call budget. Subagent calls are counted against THIS, never against
+#: the main run ceiling, because the two are not the same resource: one adversarial
+#: review legitimately spends ~40 calls, and charging that to the run left the main
+#: agent unable to act on the findings it just paid for (field bug, 2026-07-31 — a
+#: review and its own remediation could not coexist in a single run). The runaway
+#: backstop is unchanged in substance: a runaway main loop still trips DEFAULT_CEILING,
+#: a runaway subagent trips this, and runaway fan-out trips DEFAULT_MAX_AGENTS.
+DEFAULT_AGENT_CEILING = _env_int("FORGE_AGENT_CEILING", 150)
 
-def record_agent(agent_id: str, now: float | None = None) -> bool:
-    """Record this agent in the active run's roster. Return True iff admitting it would
-    breach the fan-out cap (i.e. it is a NEW agent and the roster is already full).
 
-    Agents already on the roster are never blocked — the cap limits how WIDE a run may
-    fan out, not how much an admitted agent may do (the ceiling governs that). Empty
-    agent_id (the main agent, or a harness that sends none) is never counted.
-    Fails open on every error, like every other control here."""
+def record_agent(agent_id: str, now: float | None = None) -> str | None:
+    """Record this agent's call. Returns a deny reason, or None to allow.
+
+    Two limits, deliberately separate: the fan-out cap bounds how WIDE a run may
+    spread (how many distinct agents), and DEFAULT_AGENT_CEILING bounds how much any
+    ONE of them may do. Neither touches the main run ceiling — see that constant for
+    why charging subagent work to the run budget was wrong.
+
+    Empty agent_id (the main agent, or a harness that sends none) is never counted
+    here; it is governed by tick_and_check. Fails open on every error, like every
+    other control."""
     if not agent_id:
-        return False
+        return None
     path = _active_run_path()
     if not os.path.exists(path):
-        return False
+        return None
     try:
         with open(path, "r+") as fh:
             try:
@@ -306,27 +324,35 @@ def record_agent(agent_id: str, now: float | None = None) -> bool:
             try:
                 run = json.load(fh)
             except ValueError:
-                return False
+                return None
             if not isinstance(run, dict):
-                return False
+                return None
             started = run.get("started_at", 0)
             now = time.time() if now is None else now
             if not started or (now - started) > STALE_SECONDS:
-                return False
+                return None
             agents = run.get("agents")
             if not isinstance(agents, dict):
                 agents = {}
             cap = int(run.get("max_agents", DEFAULT_MAX_AGENTS))
             if agent_id not in agents and len(agents) >= cap:
-                return True  # new agent, roster full -> deny the fan-out
-            agents[agent_id] = int(agents.get(agent_id, 0)) + 1
+                return (
+                    "FORGE guard: subagent fan-out cap reached — this run has already "
+                    "engaged the maximum number of agents; consolidate the work or "
+                    "raise FORGE_MAX_AGENTS"
+                )
+            count = int(agents.get(agent_id, 0)) + 1
+            agents[agent_id] = count
             run["agents"] = agents
             fh.seek(0)
             json.dump(run, fh)
             fh.truncate()
-            return False
+            agent_ceiling = int(run.get("agent_ceiling", DEFAULT_AGENT_CEILING))
+            if count > agent_ceiling:
+                return _halt_message(f"subagent {agent_id} exceeded its call budget")
+            return None
     except OSError:
-        return False
+        return None
 
 
 def iteration_breached(now: float | None = None) -> bool:
@@ -339,7 +365,9 @@ def iteration_breached(now: float | None = None) -> bool:
     try:
         with open(path) as fh:
             try:
-                fcntl.flock(fh, fcntl.LOCK_SH)  # shared read lock: never read a torn write
+                fcntl.flock(
+                    fh, fcntl.LOCK_SH
+                )  # shared read lock: never read a torn write
             except OSError:
                 pass
             run = json.load(fh)
@@ -373,9 +401,18 @@ def iteration_breached(now: float | None = None) -> bool:
 # still blocked even when disguised alongside it. Ending a run is itself logged, so the
 # escape is auditable rather than silent.
 _FORGE_CONTROL = re.compile(
-    r"^\s*(?:[\w./\\-]*python[\d.]*\s+)?"              # optional interpreter
+    r"^\s*(?:"
+    r"(?:[\w./\\-]*python[\d.]*\s+)?"  # optional interpreter
     r"[\"']?[^\"'\s]*(?:forge_trace(?:\.py)?|TRACE)[\"']?\s+"  # trace CLI or its alias
-    r"(end|start|scope|log|blocker)\b",                   # a known subcommand
+    r"(?:end|start|scope|log|blocker)\b"  # a known subcommand
+    r"|"
+    # The halt message's FIRST suggestion is `rm -f <run>/active_run.json`, and a
+    # guard that blocks its own printed remedy is the same field bug as the one
+    # above, one command over. Deliberately narrow: the path must END in
+    # active_run.json and may contain no glob metacharacters, so this cannot be
+    # widened into an arbitrary delete. is_denied() still runs first.
+    r"rm\s+(?:-[a-zA-Z]+\s+)*[\"']?[^\"'\s*?\[\]]*active_run\.json[\"']?\s*$"
+    r")",
     re.I,
 )
 
@@ -474,12 +511,12 @@ def _in_scope(file_path: str, globs: list[str], project_dir: str | None) -> bool
         except ValueError:
             pass
     candidates.add(os.path.basename(file_path))
-    return any(
-        _path_matches(cand, pat) for pat in globs for cand in candidates
-    )
+    return any(_path_matches(cand, pat) for pat in globs for cand in candidates)
 
 
-def scope_violation(tool_name: str, file_path: str, now: float | None = None) -> str | None:
+def scope_violation(
+    tool_name: str, file_path: str, now: float | None = None
+) -> str | None:
     """The assumption guard (deterministic slice): block a file-mutating tool whose
     target is OUTSIDE the run's declared scope. Touching a file the plan never said it
     would touch is an unconfirmed scope assumption — exactly the silent scope-creep
@@ -556,8 +593,10 @@ def _extract(payload: dict[str, Any]) -> dict[str, str]:
             agent_id = val
             break
     return {
-        "command": command, "tool_name": tool_name,
-        "agent_id": agent_id, "file_path": file_path,
+        "command": command,
+        "tool_name": tool_name,
+        "agent_id": agent_id,
+        "file_path": file_path,
     }
 
 
@@ -577,18 +616,16 @@ def evaluate(payload: dict[str, Any]) -> str | None:
     if iteration_breached():
         return _halt_message(
             "loop cap — the same blocker exceeded the iteration limit; attribute "
-            "(PLAN|CONTEXT|TOOL|CAPABILITY)")
+            "(PLAN|CONTEXT|TOOL|CAPABILITY)"
+        )
     scope_reason = scope_violation(fields["tool_name"], fields["file_path"])
     if scope_reason is not None:
         return scope_reason
-    # Fan-out cap before the ceiling tick: a denied agent must not consume the run's
-    # tool-call budget. Also records per-agent activity, so a multi-agent run can be
-    # audited by WHO acted, not just how much happened.
-    if record_agent(fields["agent_id"]):
-        return (
-            "FORGE guard: subagent fan-out cap reached — this run has already engaged "
-            "the maximum number of agents; consolidate the work or raise FORGE_MAX_AGENTS"
-        )
+    # SUBAGENT calls are governed by record_agent (fan-out cap + per-agent budget) and
+    # deliberately do NOT tick the main run ceiling. Charging a review's ~40 calls to the
+    # run left the main agent unable to act on the findings it had just paid for.
+    if fields["agent_id"]:
+        return record_agent(fields["agent_id"])
     if tick_and_check():
         return _halt_message("tool-call ceiling reached")
     return None
@@ -618,13 +655,17 @@ def _emit_block(reason: str, mode: str) -> int:
     json: the PreToolUse deny-decision object on stdout, exit 0 — for
     harnesses that consume a permissionDecision instead of the exit code."""
     if mode == "json":
-        print(json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": reason,
-            }
-        }))
+        print(
+            json.dumps(
+                {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": reason,
+                    }
+                }
+            )
+        )
         return 0
     print(reason, file=sys.stderr)
     return 2

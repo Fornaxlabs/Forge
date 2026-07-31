@@ -10,6 +10,7 @@ Point FORGE_HOME at a fresh tmp dir per test so the suite is hermetic and never
 reads or mutates the repo's real run state. Tests that need a specific
 FORGE_HOME still win: their own monkeypatch.setenv runs after this fixture.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

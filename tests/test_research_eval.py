@@ -1,4 +1,5 @@
 """Tests for evals/research_discipline.py — the research-first proof + scorer."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -23,7 +24,10 @@ def test_matches_exact_only():
 
 
 def test_score_counts_correct():
-    s = rd.score({"python_latest": "3.14.6", "go_latest": "1.26.5", "rust_latest": "1.97.1"}, rd.KEY)
+    s = rd.score(
+        {"python_latest": "3.14.6", "go_latest": "1.26.5", "rust_latest": "1.97.1"},
+        rd.KEY,
+    )
     assert s["correct"] == 3
     assert s["accuracy"] == 1.0
 
@@ -31,13 +35,13 @@ def test_score_counts_correct():
 def test_memory_runs_are_wrong_and_inconsistent():
     # the recorded proof: memory answered wrong and disagreed with itself
     accs = [rd.score(r, rd.KEY)["accuracy"] for r in rd.MEMORY_RUNS]
-    assert max(accs) < 1.0                      # neither memory run was fully correct
+    assert max(accs) < 1.0  # neither memory run was fully correct
     assert rd.consistency(rd.MEMORY_RUNS) < 1.0  # the two runs disagreed
 
 
 def test_search_runs_are_correct_and_consistent():
     accs = [rd.score(r, rd.KEY)["accuracy"] for r in rd.SEARCH_RUNS]
-    assert min(accs) == 1.0                       # every search run fully correct
+    assert min(accs) == 1.0  # every search run fully correct
     assert rd.consistency(rd.SEARCH_RUNS) == 1.0  # and identical to each other
 
 
