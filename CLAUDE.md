@@ -9,7 +9,8 @@ Stack: Python, stdlib-only tooling; ruff + mypy + pytest.
 One `reviewer` agent wears the plan / build / review hat per step.
 - SMALL — 1 file, no auth/secrets/deps/network/datamodel: build → review.
 - MEDIUM — multi-file, no security surface: short plan → build → review.
-- LARGE — architecture/auth/secrets/deps/network/datamodel/destructive:
+- LARGE — architecture/auth/secrets/deps/network/datamodel/destructive, AND any ADR
+  or plan doc even when no code changes (it is what later decisions are built on):
   best-of-2 plan → HUMAN approves → checkpoint → build → review.
 The review hat also judges the triage choice; too light = MAJOR.
 
@@ -30,6 +31,14 @@ Two of these BIND (hooks); the rest is what no hook can reach.
   blocked. Widen deliberately (`TRACE scope --add`), never drift.
 - **Done**: `TRACE end` refuses a success outcome without a logged verify/test/review
   event. `--force --note` overrides and logs the override as an assumption.
+- **Research before deciding, not after.** For any external fact a decision rests on
+  (CLI flags, API behaviour, versions, standards) read the CURRENT official docs or the
+  real source BEFORE it enters the plan — never "verify later". Memory does not announce
+  itself as memory: a plausible flag arrives with the same confidence as a checked one.
+  Log it: `TRACE log --event research --json '{"claim":…,"source":…,"version":…}'`.
+  **A LARGE run cannot close green with zero research events** (enforced in
+  traces/forge_trace.py). An ADR or a plan doc is LARGE even when no code changes —
+  it is what every later decision is built on.
 - **Cite or ask**: a codebase claim cites `file:line`; an external/current fact cites a
   live source + date (training memory is stale — verify BEFORE it enters the plan, don't
   "verify later"). Can't resolve without the human? Ask. Uncited claim = BLOCKER.

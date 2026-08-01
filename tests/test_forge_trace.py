@@ -367,3 +367,40 @@ def test_default_mode_labels_without_blocking(tmp_path, monkeypatch):
     )
     assert ft.main(["end", "--outcome", "green"], now=T0) == 0
     assert _lines(tmp_path)[-1]["independence"] == "same-family"  # recorded, not hidden
+
+
+# --- 2026-08-01 field RCA: research was advisory, so it lost ---
+
+def test_large_run_cannot_close_green_without_research(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", str(tmp_path))
+    ft.main(["start", "--task", "adr", "--triage", "LARGE", "--git-ref", "r"], now=T0)
+    ft.main(["log", "--event", "verify", "--json", '{"passed":true}'], now=T0)
+    assert ft.main(["end", "--outcome", "green"], now=T0) == 1        # refused
+    ft.main(["log", "--event", "research",
+             "--json", '{"claim":"c","source":"https://d","version":"1"}'], now=T0)
+    assert ft.main(["end", "--outcome", "green"], now=T0) == 0        # now accepted
+
+
+def test_small_run_is_unaffected_by_the_research_gate(tmp_path, monkeypatch):
+    """Scoped to LARGE so a local refactor never trips it — default-on gates that fire
+    on honest work are how guardrails die."""
+    monkeypatch.setenv("FORGE_HOME", str(tmp_path))
+    ft.main(["start", "--task", "t", "--triage", "SMALL", "--git-ref", "r"], now=T0)
+    ft.main(["log", "--event", "verify", "--json", '{"passed":true}'], now=T0)
+    assert ft.main(["end", "--outcome", "green"], now=T0) == 0
+
+
+def test_retriage_to_large_activates_the_research_gate(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", str(tmp_path))
+    ft.main(["start", "--task", "t", "--triage", "MEDIUM", "--git-ref", "r"], now=T0)
+    ft.main(["log", "--event", "retriage", "--json", '{"from":"MEDIUM","to":"LARGE"}'], now=T0)
+    ft.main(["log", "--event", "verify", "--json", '{"passed":true}'], now=T0)
+    assert ft.main(["end", "--outcome", "green"], now=T0) == 1
+
+
+def test_force_records_the_unresearched_close(tmp_path, monkeypatch):
+    monkeypatch.setenv("FORGE_HOME", str(tmp_path))
+    ft.main(["start", "--task", "adr", "--triage", "LARGE", "--git-ref", "r"], now=T0)
+    ft.main(["log", "--event", "verify", "--json", '{"passed":true}'], now=T0)
+    assert ft.main(["end", "--outcome", "green", "--force", "--note", "no external facts"],
+                   now=T0) == 0

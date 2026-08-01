@@ -208,6 +208,16 @@ def model_family(model: str) -> str:
     return ""
 
 
+def _effective_triage(events: list[dict[str, Any]]) -> str:
+    """The tier the run ENDED at — a mid-run re-triage raises it."""
+    start = next((e for e in events if e.get("event") == "run_start"), None)
+    tier = str(start.get("triage", "")) if start else ""
+    for e in events:
+        if e.get("event") == "retriage" and e.get("to"):
+            tier = str(e["to"])
+    return tier
+
+
 def verification_independence(events: list[dict[str, Any]]) -> str:
     """Strongest independence achieved by any verify event in this run:
       "cross-family" — a different vendor's model reproduced the evidence
@@ -294,6 +304,25 @@ def end(
     # LOGGED as an explicit assumption, never silent.
     events = _read_events(active["path"])
     independence = verification_independence(events)
+    # Research gate (2026-08-01, from a field RCA): a LARGE run decides architecture —
+    # an ADR, an auth or network choice — and those are built on external facts. The
+    # research rule existed in prose, an eval and an audit counter, and bound in none
+    # of them: an agent asserted a CLI flag from memory inside a LARGE decision and
+    # nothing stopped it, because advisory rules lose to a model that feels certain.
+    # Deliberately narrow: LARGE only, so a local refactor never trips it.
+    if (outcome.strip().lower() in _SUCCESS_OUTCOMES and not force
+            and _effective_triage(events) == "LARGE"
+            and not any(e.get("event") == "research" for e in events)):
+        raise ValueError(
+            "cannot close a LARGE run as "
+            f"'{outcome}' with zero research events. A LARGE run decides architecture, "
+            "and those decisions rest on external facts (CLI flags, API behaviour, "
+            "versions) that training memory gets wrong without announcing it. Log what "
+            "you actually checked: `log --event research --json "
+            "'{\"claim\":\"...\",\"source\":\"<url>\",\"version\":\"...\"}'`. "
+            "If the decision genuinely rested on no external fact, say so with --force "
+            "--note '<why>' and it is recorded as an assumption."
+        )
     # Opt-in strict mode: a success close REQUIRES genuinely independent verification.
     if (outcome.strip().lower() in _SUCCESS_OUTCOMES
             and os.environ.get("FORGE_REQUIRE_CROSS_FAMILY") == "1"
