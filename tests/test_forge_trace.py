@@ -37,6 +37,15 @@ def test_full_lifecycle(tmp_path, monkeypatch):
         )
         == 0
     )
+    # LARGE decisions must record the external facts they rest on (research gate)
+    assert (
+        ft.main(
+            ["log", "--event", "research",
+             "--json", '{"claim": "oauth2 flow", "source": "https://rfc.example"}'],
+            now=T0,
+        )
+        == 0
+    )
     assert ft.main(["end", "--outcome", "green", "--iterations", "2"], now=T0) == 0
     # active run cleared on end
     assert not (tmp_path / "active_run.json").exists()
